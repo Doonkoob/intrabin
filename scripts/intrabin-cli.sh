@@ -153,6 +153,7 @@ cmd_domain() {
   ask d "Domain" "$cur"
   if [[ "$d" == "-" ]]; then
     set_env INTRABIN_DOMAIN ""
+    set_env INTRABIN_ALLOWED_HOSTS ""
     set_env INTRABIN_COOKIE_SECURE false
     set_env INTRABIN_PORT 8080
     if confirm "Publish port 8080 on all interfaces (plain HTTP, reachable from the network)" "y"; then
@@ -180,6 +181,7 @@ cmd_domain() {
   set_env INTRABIN_BIND 127.0.0.1
   set_env INTRABIN_PORT 8080
   set_env INTRABIN_COOKIE_SECURE true
+  set_env INTRABIN_ALLOWED_HOSTS "$d,127.0.0.1,localhost"
   set_env INTRABIN_TRUSTED_PROXIES "172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
   set_profile proxy on
   write_caddyfile
@@ -279,6 +281,11 @@ cmd_restore() {
 
 cmd_update() {
   local branch before after
+  if [[ -n "$(get_env INTRABIN_IMAGE)" ]]; then
+    echo "This server runs the published release $(get_env INTRABIN_VERSION). To move to another release run:"
+    echo "  bash $INSTALL_DIR/scripts/install.sh --release vX.Y.Z"
+    return 0
+  fi
   branch=$(git rev-parse --abbrev-ref HEAD)
   before=$(git rev-parse --short HEAD)
   echo "Fetching the latest version ($branch)…"

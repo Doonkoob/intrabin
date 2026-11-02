@@ -26,6 +26,11 @@ What it does, in order:
    removes the setup token from `.env`. The password is printed once and stored nowhere.
 7. Installs the `intrabin` management command (`/usr/local/bin/intrabin`).
 
+Published releases: `--release v1.2.3` checks out that tag and pulls the images that the release
+workflow (`.github/workflows/release.yml`, run when a `v*` tag is pushed) publishes to
+`ghcr.io/<owner>/intrabin` and `ghcr.io/<owner>/intrabin-runner`, so nothing is built on the server.
+Without it the images are built from source (about 1.5 GB RAM and a few minutes).
+
 Restricted networks: `--docker-mirror https://mirror.example` (Docker registry mirror, written to
 `/etc/docker/daemon.json` only when that file is empty), `--goproxy` and `--npm-registry` (used
 while building the image). Re-running the installer without `--domain`/`--no-domain` keeps the

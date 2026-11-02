@@ -23,6 +23,8 @@
 #   --docker-mirror URL  Docker registry mirror (e.g. https://docker.arvancloud.ir)
 #   --goproxy URL        Go module proxy for the image build (e.g. https://goproxy.io,direct)
 #   --npm-registry URL   npm registry for the image build
+#   --release TAG        pull the published images for TAG (e.g. v1.0.0) instead of building
+#                        (also checks out that tag); without it the images are built from source
 #   --skip-build         use images that are already present (e.g. loaded with `docker load`)
 #   --dir PATH           install directory (default /opt/intrabin)
 #   --repo URL           git repository (default https://github.com/Doonkoob/intrabin)
@@ -34,7 +36,7 @@ REPO_URL="https://github.com/Doonkoob/intrabin"
 BRANCH="main"
 INSTALL_DIR="/opt/intrabin"
 DOMAIN="" EMAIL="" MODE="" EXPOSE="" PORT="8080" RUNNER="yes" ASSUME_YES="no"
-DOCKER_MIRROR="" GOPROXY_URL="" NPM_REGISTRY="" SKIP_BUILD="no"
+DOCKER_MIRROR="" GOPROXY_URL="" NPM_REGISTRY="" SKIP_BUILD="no" RELEASE=""
 
 if [[ -t 1 ]]; then
   R=$'\e[31m' G=$'\e[32m' Y=$'\e[33m' B=$'\e[34m' C=$'\e[36m' W=$'\e[1m' N=$'\e[0m'
@@ -95,6 +97,7 @@ while [[ $# -gt 0 ]]; do
     --goproxy) GOPROXY_URL="${2:-}"; shift 2 ;;
     --npm-registry) NPM_REGISTRY="${2:-}"; shift 2 ;;
     --skip-build) SKIP_BUILD="yes"; shift ;;
+    --release) RELEASE="${2:-}"; shift 2 ;;
     --dir) INSTALL_DIR="${2:-}"; shift 2 ;;
     --repo) REPO_URL="${2:-}"; shift 2 ;;
     --branch) BRANCH="${2:-}"; shift 2 ;;
@@ -230,10 +233,16 @@ configure_docker_mirror() {
 }
 
 fetch_source() {
+  if [[ -n "$RELEASE" ]]; then
+    [[ "$RELEASE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || die "invalid release tag: $RELEASE (expected e.g. v1.0.0)"
+    BRANCH="$RELEASE"
+  fi
   if [[ -d "$INSTALL_DIR/.git" ]]; then
     info "Updating the source in $INSTALL_DIR…"
     git -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH" -q
-    git -C "$INSTALL_DIR" checkout -q -f -B "$BRANCH" FETCH_HEAD
+    local local_branch="$BRANCH"
+    [[ -n "$RELEASE" ]] && local_branch="release"  # a tag is checked out on a local branch of its own
+    git -C "$INSTALL_DIR" checkout -q -f -B "$local_branch" FETCH_HEAD
   elif [[ -e "$INSTALL_DIR" && -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]]; then
     die "$INSTALL_DIR exists and is not an Intrabin checkout; choose another --dir"
   else
@@ -309,9 +318,11 @@ write_config() {
     set_env "$env" INTRABIN_PORT 8080
     set_env "$env" INTRABIN_TRUSTED_PROXIES "172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
     set_env "$env" INTRABIN_COOKIE_SECURE true
+    set_env "$env" INTRABIN_ALLOWED_HOSTS "$DOMAIN,127.0.0.1,localhost"  # DNS-rebinding protection
     profiles+=(proxy)
   else
     set_env "$env" INTRABIN_DOMAIN ""
+    set_env "$env" INTRABIN_ALLOWED_HOSTS ""
     set_env "$env" INTRABIN_PORT "$PORT"
     if [[ "$EXPOSE" == "yes" ]]; then set_env "$env" INTRABIN_BIND 0.0.0.0; else set_env "$env" INTRABIN_BIND 127.0.0.1; fi
     set_env "$env" INTRABIN_COOKIE_SECURE false
@@ -329,11 +340,26 @@ write_config() {
   [[ -n "$GOPROXY_URL" ]] && set_env "$env" GOPROXY_URL "$GOPROXY_URL"
   [[ -n "$NPM_REGISTRY" ]] && set_env "$env" NPM_REGISTRY "$NPM_REGISTRY"
   set_env "$env" COMPOSE_PROFILES "$(IFS=,; echo "${profiles[*]}")"
-  set_env "$env" INTRABIN_VERSION "$(git -C "$INSTALL_DIR" rev-parse --short HEAD)"
+  set_release_images "$env"
   chmod 600 "$env"
   write_caddyfile
   umask 022
   ok "Configuration written to $env (mode 600; it contains the master key — back it up)"
+}
+
+# set_release_images FILE: point Compose at the published images of --release, or back to local builds.
+set_release_images() {
+  local env="$1" owner
+  if [[ -n "$RELEASE" ]]; then
+    owner=$(sed -E 's#^https?://github\.com/([^/]+)/.*#\1#' <<<"$REPO_URL" | tr '[:upper:]' '[:lower:]')
+    set_env "$env" INTRABIN_IMAGE "ghcr.io/$owner/intrabin:$RELEASE"
+    set_env "$env" INTRABIN_RUNNER_IMAGE "ghcr.io/$owner/intrabin-runner:$RELEASE"
+    set_env "$env" INTRABIN_VERSION "$RELEASE"
+  else
+    set_env "$env" INTRABIN_IMAGE ""
+    set_env "$env" INTRABIN_RUNNER_IMAGE ""
+    set_env "$env" INTRABIN_VERSION "$(git -C "$INSTALL_DIR" rev-parse --short HEAD)"
+  fi
 }
 
 write_caddyfile() {
@@ -365,6 +391,9 @@ start_services() {
   cd "$INSTALL_DIR"
   if [[ "$SKIP_BUILD" == "yes" ]]; then
     info "Skipping the image build (--skip-build)"
+  elif [[ -n "$RELEASE" ]]; then
+    info "Pulling the $RELEASE images…"
+    docker compose pull || die "could not pull the $RELEASE images (does the release exist? Use --docker-mirror behind restricted networks)"
   else
     info "Building the images (first install takes a few minutes)…"
     docker compose build || die "image build failed. Behind restricted networks use --docker-mirror, --goproxy and --npm-registry."
@@ -453,7 +482,7 @@ main() {
   fetch_source
   if [[ "$existing" == "yes" && -z "$MODE" ]]; then
     info "Existing installation found: keeping its configuration and updating"
-    set_env "$INSTALL_DIR/.env" INTRABIN_VERSION "$(git -C "$INSTALL_DIR" rev-parse --short HEAD)"
+    set_release_images "$INSTALL_DIR/.env"
     write_caddyfile
   else
     choose_mode
