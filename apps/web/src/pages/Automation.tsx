@@ -31,7 +31,15 @@ function Ltr({ children }: { children: ReactNode }) {
   return <span dir="ltr" className="ltr inline-block font-mono text-xs">{children}</span>
 }
 
+const opSymbol: Record<string, string> = { gt: '>', ge: '≥', lt: '<', le: '≤', eq: '=', ne: '≠' }
+
+function conditionText(t: (k: Key, v?: Record<string, string | number>) => string, loc: string, tr: WorkflowTrigger) {
+  const value = tr.metric === 'status' ? t(`status.${tr.status_value ?? 'DOWN'}` as Key) : `${new Intl.NumberFormat(loc, { maximumFractionDigits: 2 }).format(tr.threshold ?? 0)} ${t(`wf.cond.unit.${tr.metric}` as Key)}`.trim()
+  return `${t(`wf.cond.metric.${tr.metric}` as Key)} ${opSymbol[tr.op ?? 'gt']} ${value}`
+}
+
 function triggerLabel(t: (k: Key, v?: Record<string, string | number>) => string, loc: string, tr: WorkflowTrigger) {
+  if (tr.type === 'condition') return t('wf.trigger.onCondition', { c: conditionText(t, loc, tr) })
   if (tr.type === 'schedule') return t('wf.trigger.everyN', { n: fmtDuration(loc, tr.interval_seconds ?? 0) })
   const names = (tr.on_statuses ?? ['CONFIRMED']).map((s) => t(`incident.${s}` as Key))
   if (tr.type === 'incident') return t('wf.trigger.onIncident', { s: new Intl.ListFormat(loc, { type: 'disjunction' }).format(names) })
@@ -186,7 +194,8 @@ export function WorkflowDetailPage() {
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
             <dt className="text-muted">{t('wf.trigger')}</dt><dd>{triggerLabel(t, loc, w.trigger)}</dd>
             {w.trigger.type === 'schedule' && <><dt className="text-muted">{t('wf.nextFire')}</dt><dd>{w.enabled ? fmtDateTime(loc, w.next_fire_at) : '—'}</dd></>}
-            {w.trigger.type === 'incident' && <><dt className="text-muted">{t('wf.scope')}</dt><dd>{[...(w.trigger.tags ?? []).map((x) => '#' + x), ...(w.trigger.monitor_ids?.length ? [t('wf.nMonitors', { n: w.trigger.monitor_ids.length })] : [])].join(' ') || t('wf.allMonitors')}</dd></>}
+            {w.trigger.type === 'condition' && <><dt className="text-muted">{t('wf.cond.repeat')}</dt><dd>{fmtDuration(loc, (w.trigger.repeat_minutes ?? 60) * 60)}</dd></>}
+            {(w.trigger.type === 'incident' || w.trigger.type === 'condition') && <><dt className="text-muted">{t('wf.scope')}</dt><dd>{[...(w.trigger.tags ?? []).map((x) => '#' + x), ...(w.trigger.monitor_ids?.length ? [t('wf.nMonitors', { n: w.trigger.monitor_ids.length })] : [])].join(' ') || t('wf.allMonitors')}</dd></>}
             <dt className="text-muted">{t('wf.operatorRun')}</dt><dd>{w.operator_can_run ? t('common.yes') : t('common.no')}</dd>
             <dt className="text-muted">{t('wf.secrets')}</dt><dd>{w.secret_keys.length ? <Ltr>{w.secret_keys.join(', ')}</Ltr> : '—'}</dd>
             <dt className="text-muted">{t('wf.version')}</dt><dd className="tabular">{w.version}</dd>
@@ -393,7 +402,7 @@ export function WorkflowFormPage() {
 }
 
 function WorkflowForm({ initial, monitors, dnsProviders, onSaved, onCancel, title }: { initial?: Workflow; monitors: Monitor[]; dnsProviders: DNSProvider[]; onSaved: (w: Workflow) => void; onCancel: () => void; title: string }) {
-  const { t } = usePrefs()
+  const { t, loc } = usePrefs()
   const [name, setName] = useState(initial?.name ?? '')
   const [description, setDescription] = useState(initial?.description ?? '')
   const [enabled, setEnabled] = useState(initial?.enabled ?? false)
@@ -411,7 +420,7 @@ function WorkflowForm({ initial, monitors, dnsProviders, onSaved, onCancel, titl
   const autoWarn = enabled && trigger.type !== 'manual'
   const save = async () => {
     setBusy(true); setErr(null)
-    const tr: WorkflowTrigger = trigger.type === 'incident' ? { ...trigger, tags: tags.split(',').map((x) => x.trim()).filter(Boolean) } : trigger
+    const tr: WorkflowTrigger = trigger.type === 'incident' || trigger.type === 'condition' ? { ...trigger, tags: tags.split(',').map((x) => x.trim()).filter(Boolean) } : trigger
     const body = { name, description, enabled, operator_can_run: opRun, trigger: tr, steps: steps.map(fromDraft), secrets: fromKV(secrets) }
     try {
       const r = initial ? await put<{ workflow: Workflow }>(`/workflows/${initial.id}`, body) : await post<{ workflow: Workflow }>('/workflows', body)
@@ -440,21 +449,61 @@ function WorkflowForm({ initial, monitors, dnsProviders, onSaved, onCancel, titl
         <Card title={t('wf.trigger')}>
           <div className="grid gap-4 md:grid-cols-2">
             <Field label={t('wf.triggerTypeLabel')} htmlFor="wf-trigger" error={f['trigger.type']}>
-              <Select id="wf-trigger" value={trigger.type} onChange={(e) => setTrigger({ type: e.target.value as WorkflowTrigger['type'], interval_seconds: e.target.value === 'schedule' ? 3600 : undefined, on_statuses: e.target.value === 'incident' ? ['CONFIRMED'] : undefined })}>
+              <Select id="wf-trigger" value={trigger.type} onChange={(e) => {
+                const ty = e.target.value as WorkflowTrigger['type']
+                setTrigger({ type: ty, interval_seconds: ty === 'schedule' ? 3600 : undefined, on_statuses: ty === 'incident' ? ['CONFIRMED'] : undefined,
+                  ...(ty === 'condition' ? { metric: 'latency_ms', op: 'gt', threshold: 1000, repeat_minutes: 60 } : {}) })
+              }}>
                 <option value="manual">{t('wf.triggerType.manual')}</option>
                 <option value="incident">{t('wf.triggerType.incident')}</option>
+                <option value="condition">{t('wf.triggerType.condition')}</option>
                 <option value="schedule">{t('wf.triggerType.schedule')}</option>
               </Select>
             </Field>
+            {trigger.type === 'condition' && (
+              <Field label={t('wf.cond.repeatMinutes')} htmlFor="wf-repeat" help={t('wf.cond.repeatHelp')} error={f['trigger.repeat_minutes']}>
+                <Input id="wf-repeat" type="number" min={1} value={trigger.repeat_minutes ?? 60} onChange={(e) => setTrigger({ ...trigger, repeat_minutes: Number(e.target.value) })} />
+              </Field>
+            )}
             {trigger.type === 'schedule' && (
               <Field label={t('wf.intervalMinutes')} htmlFor="wf-interval" error={f['trigger.interval_seconds']}>
                 <Input id="wf-interval" type="number" min={1} value={Math.round((trigger.interval_seconds ?? 3600) / 60)} onChange={(e) => setTrigger({ ...trigger, interval_seconds: Number(e.target.value) * 60 })} />
               </Field>
             )}
           </div>
-          {trigger.type === 'incident' && (
+          {trigger.type === 'condition' && (
+            <div className="mt-4 grid gap-4 md:grid-cols-3" data-testid="condition-editor">
+              <Field label={t('wf.cond.metric')} htmlFor="wf-metric" error={f['trigger.metric']}>
+                <Select id="wf-metric" value={trigger.metric ?? 'latency_ms'} onChange={(e) => {
+                  const metric = e.target.value as NonNullable<WorkflowTrigger['metric']>
+                  const defaults: Record<string, Partial<WorkflowTrigger>> = { latency_ms: { op: 'gt', threshold: 1000 }, status_code: { op: 'ge', threshold: 500 }, uptime_24h: { op: 'lt', threshold: 99 }, cert_days: { op: 'lt', threshold: 14 }, status: { op: 'eq', status_value: 'DOWN' } }
+                  setTrigger({ ...trigger, metric, ...defaults[metric] })
+                }}>
+                  {(['latency_ms', 'status_code', 'uptime_24h', 'cert_days', 'status'] as const).map((m) => <option key={m} value={m}>{t(`wf.cond.metric.${m}` as Key)}</option>)}
+                </Select>
+              </Field>
+              <Field label={t('wf.cond.op')} htmlFor="wf-op" error={f['trigger.op']}>
+                <Select id="wf-op" value={trigger.op ?? 'gt'} onChange={(e) => setTrigger({ ...trigger, op: e.target.value as WorkflowTrigger['op'] })}>
+                  {(trigger.metric === 'status' ? ['eq', 'ne'] : ['gt', 'ge', 'lt', 'le', 'eq', 'ne']).map((o) => <option key={o} value={o}>{t(`wf.cond.op.${o}` as Key)}</option>)}
+                </Select>
+              </Field>
+              {trigger.metric === 'status' ? (
+                <Field label={t('wf.cond.value')} htmlFor="wf-sv" error={f['trigger.status_value']}>
+                  <Select id="wf-sv" value={trigger.status_value ?? 'DOWN'} onChange={(e) => setTrigger({ ...trigger, status_value: e.target.value })}>
+                    {['UP', 'DEGRADED', 'SUSPECTED_DOWN', 'DOWN', 'UNKNOWN', 'MAINTENANCE'].map((x) => <option key={x} value={x}>{t(`status.${x}` as Key)}</option>)}
+                  </Select>
+                </Field>
+              ) : (
+                <Field label={`${t('wf.cond.value')} (${t(`wf.cond.unit.${trigger.metric ?? 'latency_ms'}` as Key)})`} htmlFor="wf-thr" error={f['trigger.threshold']}>
+                  <Input id="wf-thr" type="number" step="any" value={trigger.threshold ?? 0} onChange={(e) => setTrigger({ ...trigger, threshold: Number(e.target.value) })} />
+                </Field>
+              )}
+              <p className="text-xs text-muted md:col-span-3" data-testid="condition-summary">{t('wf.cond.summary', { c: conditionText(t, loc, trigger) })}</p>
+            </div>
+          )}
+          {(trigger.type === 'incident' || trigger.type === 'condition') && (
             <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <fieldset>
+              {trigger.type === 'incident' ? <fieldset>
                 <legend className="mb-2 text-sm font-medium">{t('wf.onStatuses')}</legend>
                 <div className="grid grid-cols-2 gap-1.5">
                   {allIncidentStatuses.map((s) => (
@@ -463,7 +512,7 @@ function WorkflowForm({ initial, monitors, dnsProviders, onSaved, onCancel, titl
                   ))}
                 </div>
                 {f['trigger.on_statuses'] && <p className="mt-1 text-xs text-down">{f['trigger.on_statuses']}</p>}
-              </fieldset>
+              </fieldset> : <p className="text-sm text-muted">{t('wf.cond.scopeHelp')}</p>}
               <div className="flex flex-col gap-3">
                 <Field label={t('wf.tags')} htmlFor="wf-tags" optional help={t('wf.scopeHelp')}><Input id="wf-tags" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="prod, api" /></Field>
                 <fieldset>

@@ -16,6 +16,10 @@ multi-location monitoring with automatic leader failover.
 * Round-based detection policy: confirmations, minimum independent locations, consecutive or rolling-window escalation, recovery threshold, cooldown. Missing data is never treated as downtime.
 * Persistent incident state machine with deduplication, acknowledgement, manual resolution, notes and a full timeline.
 * Uptime for 24 h / 7 d / 30 d / 90 d with separate **availability** and **coverage**, 90-day history bars, response-time charts, status-code and error breakdowns, per-node results, certificate expiry.
+* **Latency per monitoring node**: average latency and failed probes for every node and every monitor, stored as hourly aggregates and shown on the dashboard (1 h / 24 h / 7 d / 30 d).
+* **SSL expiry overview**: every HTTPS/TLS monitor's certificate, soonest first; alerts through an incident (*fail when the certificate expires within N days*) or a condition workflow.
+* **Simple monitor form**: name, type, URL and interval by default; HTTP method, headers, body, expected status/text, policy and node selection under **Advanced**.
+* **Data retention presets** (7 days to 12 months) with automatic deletion, and the database size per data type in Settings.
 * Maintenance windows, monitor groups and tags.
 * Users with Owner/Admin/Operator/Viewer roles, Argon2id passwords, CSRF protection, login rate limiting, audit log.
 * Secrets encrypted at rest (AES-256-GCM) and never returned by the API.
@@ -23,7 +27,8 @@ multi-location monitoring with automatic leader failover.
   to voters; Raft (hashicorp/raft) replicates the control plane, peers use mutual TLS, followers ship
   probe results to the leader, a mesh safety gate and NO_QUORUM mode prevent split-brain actions.
   See [docs/operations/cluster.md](docs/operations/cluster.md).
-* **Automation**: workflows triggered by incident status changes, schedules or by hand, with Bash/Python
+* **Automation**: workflows triggered by incident status changes, conditions (latency, status code,
+  24 h uptime, days to certificate expiry, status), schedules or by hand, with Bash/Python
   script steps in an isolated Action Runner container, HTTP/webhook steps with SSRF protection, durable
   waits and incident status updates. Every external action is fenced by the leader term; an action whose
   outcome is uncertain after a failover is never repeated but marked UNKNOWN_OUTCOME for reconciliation.

@@ -1,11 +1,12 @@
+import { useState } from 'react'
 import { Link } from 'react-router'
 import { Activity, Plus } from 'lucide-react'
 import { usePrefs, useSession } from '../app'
 import { useApi } from '../hooks'
-import { fmtMs, fmtNumber, fmtPct, fmtRelative } from '../format'
-import { Button, Card, Empty, ErrorBanner, IncidentBadge, PageHeader, Spinner, Stat, StatusBadge } from '../components/ui'
+import { fmtDate, fmtMs, fmtNumber, fmtPct, fmtRelative } from '../format'
+import { Button, Card, Empty, ErrorBanner, IncidentBadge, PageHeader, Segmented, Spinner, Stat, StatusBadge } from '../components/ui'
 import { LatencyChart, UptimeBars } from '../components/charts'
-import type { DailyBucket, Incident, LatencyPoint, MonitorStatus, NodeInfo } from '../types'
+import type { CertInfo, DailyBucket, Incident, LatencyPoint, MonitorStatus, NodeCell, NodeInfo, NodeLatency } from '../types'
 
 interface Overview {
   monitors: { total: number; by_status: Record<string, number>; list: { id: string; name: string; status: MonitorStatus; uptime_24h: number | null; latency_ms?: number }[] }
@@ -85,8 +86,88 @@ export function OverviewPage() {
               ))}
             </ul>
           </Card>
+          <NodeLatencyCard />
+          <CertificatesCard />
         </div>
       )}
     </>
+  )
+}
+
+function latencyClass(ms: number | null | undefined) {
+  if (ms == null) return 'text-muted'
+  if (ms >= 1000) return 'text-down'
+  if (ms >= 400) return 'text-warn'
+  return ''
+}
+
+function Cell({ c }: { c?: NodeCell }) {
+  const { t, loc } = usePrefs()
+  if (!c || c.probes === 0) return <span className="text-muted">—</span>
+  return (
+    <span className="inline-flex flex-col items-end">
+      <span className={`tabular-nums ${latencyClass(c.avg_latency_ms)}`}>{c.avg_latency_ms == null ? '—' : fmtMs(loc, c.avg_latency_ms)}</span>
+      {c.failures > 0 && <span className="text-[11px] text-down">{t('overview.failedProbes', { n: fmtNumber(loc, c.failures) })}</span>}
+    </span>
+  )
+}
+
+function NodeLatencyCard() {
+  const { t } = usePrefs()
+  const [win, setWin] = useState<'1h' | '24h' | '7d' | '30d'>('24h')
+  const { data, error, reload } = useApi<NodeLatency>(`/overview/node-latency?window=${win}`, 60000)
+  return (
+    <Card title={t('overview.nodeLatency')} className="xl:col-span-3" bodyClass="p-0"
+      actions={<Segmented label={t('overview.window')} value={win} onChange={setWin} options={(['1h', '24h', '7d', '30d'] as const).map((w) => ({ value: w, label: t(`overview.window.${w}`) }))} />}>
+      {!data ? (error ? <div className="p-4"><ErrorBanner error={error} onRetry={reload} /></div> : <Spinner />) : data.nodes.length === 0 ? <Empty>{t('overview.noNodeData')}</Empty> : (
+        <div className="overflow-x-auto" data-testid="node-latency">
+          <table className="w-full min-w-[32rem] text-sm">
+            <thead>
+              <tr className="border-b border-line text-xs text-muted">
+                <th className="px-4 py-2 text-start font-medium">{t('overview.monitor')}</th>
+                {data.nodes.map((n) => <th key={n.id} className="px-4 py-2 text-end font-medium">{n.name}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b border-line bg-surface-2 font-medium" data-testid="node-latency-avg">
+                <td className="px-4 py-2">{t('overview.allMonitors')}</td>
+                {data.nodes.map((n) => <td key={n.id} className="px-4 py-2 text-end"><Cell c={n} /></td>)}
+              </tr>
+              {data.monitors.filter((m) => Object.keys(m.nodes).length > 0).map((m) => (
+                <tr key={m.id} className="border-b border-line last:border-0">
+                  <td className="px-4 py-2"><Link to={`/monitors/${m.id}`} className="hover:underline">{m.name}</Link></td>
+                  {data.nodes.map((n) => <td key={n.id} className="px-4 py-2 text-end"><Cell c={m.nodes[n.id]} /></td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  )
+}
+
+function CertificatesCard() {
+  const { t, loc } = usePrefs()
+  const { data, error, reload } = useApi<{ certificates: CertInfo[] }>('/overview/certificates', 300000)
+  const tone = (c: CertInfo) => c.days_left == null ? 'text-muted' : c.days_left < Math.max(c.fail_days, 7) ? 'text-down' : c.days_left < Math.max(c.warn_days, 30) ? 'text-warn' : 'text-up'
+  return (
+    <Card title={t('overview.certificates')} className="xl:col-span-3" bodyClass="p-0">
+      {!data ? (error ? <div className="p-4"><ErrorBanner error={error} onRetry={reload} /></div> : <Spinner />) : data.certificates.length === 0 ? <Empty>{t('overview.noCertificates')}</Empty> : (
+        <ul className="divide-y divide-line" data-testid="certificates">
+          {data.certificates.map((c) => (
+            <li key={c.id}>
+              <Link to={`/monitors/${c.id}`} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm hover:bg-surface-2">
+                <span className="min-w-0"><span className="block truncate font-medium">{c.name}</span><span dir="ltr" className="ltr block truncate text-xs text-muted">{c.target}</span></span>
+                <span className="shrink-0 text-end">
+                  <span className={`block font-medium tabular-nums ${tone(c)}`}>{c.days_left == null ? t('overview.certUnknown') : t('overview.certDays', { n: fmtNumber(loc, Math.floor(c.days_left)) })}</span>
+                  {c.expires_at && <span className="block text-xs text-muted">{fmtDate(loc, c.expires_at)}</span>}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   )
 }

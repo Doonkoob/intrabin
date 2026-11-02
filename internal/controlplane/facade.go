@@ -213,6 +213,12 @@ func (c *CP) PruneRuns(ctx context.Context, before time.Time) error {
 	return err
 }
 
+// PruneAudit deletes audit entries older than before (log retention).
+func (c *CP) PruneAudit(ctx context.Context, before time.Time) error {
+	_, err := c.apply(ctx, "audit.prune", expirePayload{Now: before})
+	return err
+}
+
 func (c *CP) CreateDNSProvider(ctx context.Context, p *model.DNSProvider) error {
 	_, err := c.apply(ctx, "dnsprovider.create", dnsProviderWire{DNSProvider: *p, CredentialBlob: p.CredentialBlob})
 	return err

@@ -11,7 +11,14 @@ _Last updated: 2026-11-02. Keep this file accurate: a feature is "done" only whe
 | 3 — Automation / workflows / runner | **Done** (see below; verified by Go unit/integration tests, an in-process failover test, Playwright and the local + Compose 3-node e2e with a leader killed mid-script) |
 | 4 — Cloudflare / ArvanCloud DNS | **Done** (see below; verified by Go tests against a fake of both provider APIs with fault injection, and Playwright. Not run against real provider accounts, by design) |
 | 5 — Disaster-recovery workflows | **Done** (see below; verified by Go tests with a fake DNS provider, including automatic gating and failed switches, and Playwright. No approval step type or drill mode yet) |
-| 6 — Hardening & release | Partial (CI workflow, docs, MIT license, one-command Ubuntu installer + management CLI) |
+| 6 — Hardening & release | Partial (CI workflow, docs, MIT license, one-command Ubuntu installer + management CLI, backup/restore commands, release images; plus per-node latency, SSL overview, retention presets and condition triggers) |
+
+## Completed components (monitoring insights, retention and condition triggers)
+* **Per-node latency** (migration 0006) — every evaluated round adds each node's probe (success, latency) to `monitor_node_hourly` (monitor × node × hour; replicated with the 35-day snapshot window like `monitor_hourly`). Kept during maintenance windows, since it measures the network rather than uptime. `GET /overview/node-latency?window=1h|24h|7d|30d`; dashboard card with an average row and a row per monitor.
+* **SSL expiry overview** — `GET /overview/certificates` and a dashboard card listing HTTPS/TLS monitors by days left; alerts through an incident (cert fail days, now in the basic form) or a condition workflow (`cert_days`).
+* **Condition triggers** — workflows run when `latency_ms`, `status_code`, `uptime_24h`, `cert_days` or `status` of a matching monitor crosses a threshold after a round; edge-triggered, repeat period (default 60 min) while it keeps holding, run key per workflow/monitor/slot so a leader change cannot double-start; unknown during maintenance or without data. Editor in the Automation page.
+* **Retention presets** — Settings: keep history 7 d / 15 d / 1 / 3 / 6 / 12 months (raw check results capped at 90 d) or custom per type; audit log pruning through a replicated `audit.prune` command; workflow runs follow the preset. Storage card with database size and per-table bytes/rows (`GET /system/storage`).
+* **Simple monitor form** — name, type, target, interval, timeout, certificate warning days and enabled by default; description/group/tags/retries, HTTP request (method, headers, body), expectations (status codes, body text), detection policy, nodes and secrets under **Advanced** (opened automatically when editing or when a hidden field has an error).
 
 ## Completed components (Phase 5: disaster recovery)
 * **Data model** (migration 0005) — `workflows.kind` (`workflow` | `dr`; DR workflows are hidden from the workflow list/API) and `dr_plans` (config, state, active run, direction, note, last failover/transition), replicated through `drplan.create/update/transition` commands.
@@ -63,6 +70,12 @@ _Last updated: 2026-11-02. Keep this file accurate: a feature is "done" only whe
 * **UI** — React 19 + TS + Tailwind 4 SPA embedded in the binary: setup, login, overview dashboard, monitors list/filter, monitor create/edit with live test and policy summary, monitor details (uptime periods with coverage, 90-day bars, latency chart, rounds strip, status codes, error categories, per-node, recent checks, incidents, certificate), groups, incidents + timeline, maintenance, cluster/node page, audit log, users & roles, settings (profile, password, appearance, instance, retention). Persian RTL with Vazirmatn and Jalali dates via `Intl`, English LTR, light/dark/system themes, keyboard focus styles, responsive layout. Restricted follower view (activates when the node is not the controller).
 * **Deployment** — multi-stage Dockerfile (distroless, non-root, 7.4 MB content), Compose with read-only FS, dropped caps, localhost bind, healthcheck, log rotation; `.env.example`; Makefile.
 
+## Test results (2026-11-02, insights and retention)
+* `go vet ./...` clean; `go test -race ./...`: **87 top-level tests passed, 0 failed**. New: condition trigger fires once when crossing, again only after the repeat period or after clearing, not during maintenance; all five metrics and operators; API test for node latency, certificates, storage, retention preset validation and `Retention()` mapping.
+* Playwright: **16 passed** (new: per-node latency card and window switch, certificates card, storage card, saving the 1-month preset updates the retention shown, condition workflow created in the editor, Persian overview; the monitor form test checks that advanced fields are hidden until opened).
+* Found and fixed by the UI test: saving instance settings sent the read-only `log_retention_choices` field back and was rejected.
+* `internal/cluster` failed once in a full parallel `-race` run and passed in 4 reruns (alone and in the full suite); the failing test name was not captured. Watching CI for a repeat.
+
 ## Test results (2026-11-02, Phase 5)
 * `go test -race ./...`: all packages pass. New: `internal/dr` (manual failover/failback, automatic failover opt-in + gating + once per incident + four concurrent evaluations start exactly one switch + never failback, failed switch → attention → resolve), `internal/api` DR API test (validation incl. automatic without a secondary monitor, hidden from workflows, preview, switch).
 * Playwright: **15 passed** (new: DR plan created in the UI, failover blocked by an unhealthy secondary then overridden with a reason, failback, run history, Persian layout).
@@ -97,12 +110,13 @@ _Last updated: 2026-11-02. Keep this file accurate: a feature is "done" only whe
 * `/monitors/test` uses only credentials typed into the form, not stored secrets of an existing monitor.
 * Uptime 24 h per monitor in list/overview is computed with one query per monitor (fine for hundreds, should be batched for thousands).
 * Charts keep a left-to-right time axis in RTL by design.
+* Per-node latency and condition triggers use the round's average latency; the dashboard has no per-node latency chart over time yet (table of averages only). SQLite does not shrink the file after pruning without `VACUUM`.
 * No master-key rotation command yet.
 * DNS: not exercised against real Cloudflare or ArvanCloud accounts (mocks only, as required); no compare-and-set at the providers, so the conflict check narrows but does not close the race with other editors; only A/AAAA/CNAME/TXT are editable; snapshot reasons and provider error texts are English only; zone selection in the workflow editor is a text field.
 * Automation: an incident-triggered run is created right after the incident transition commits; a crash between the two commits loses that trigger. No approval step type yet. Script output and server-side error texts are English only. Scripts have the runner container's network access (restrict egress at the network level). The runner's HTTP API is plain HTTP unless TLS is configured on it.
 
 ## Next implementation steps (Phase 6: hardening and release)
 1. Approval step type (durable pause until an operator approves) and DR drill mode against a test record.
-2. Master-key rotation command; restore command; signed release images and a published image so the installer can pull instead of build.
+2. Master-key rotation command; image signing (images are published to GHCR on `v*` tags and `install.sh --release` pulls them).
 3. Security review pass (rate limits, headers, dependency scan with govulncheck in CI), load test of large monitor counts.
 4. Translate server-side check details and error texts (currently English).

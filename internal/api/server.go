@@ -164,6 +164,9 @@ func (s *Server) Handler() http.Handler {
 		{"DELETE /api/v1/cluster/nodes/{id}", auth.PermClusterManage, true, s.handleRemoveNode},
 
 		{"GET /api/v1/overview", auth.PermView, true, s.handleOverview},
+		{"GET /api/v1/overview/node-latency", auth.PermView, true, s.handleNodeLatency},
+		{"GET /api/v1/overview/certificates", auth.PermView, true, s.handleCertificates},
+		{"GET /api/v1/system/storage", auth.PermView, true, s.handleStorage},
 
 		{"GET /api/v1/users", auth.PermUserManage, true, s.handleListUsers},
 		{"POST /api/v1/users", auth.PermUserManage, true, s.handleCreateUser},

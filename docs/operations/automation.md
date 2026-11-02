@@ -9,6 +9,26 @@ gate is open. Followers and nodes in NO_QUORUM never run anything.
 | Manual | someone presses **Run now** (or `POST /api/v1/workflows/{id}/run`) | Allowed even when the workflow is disabled. Operators need `operator_can_run`. |
 | Incident | an incident of a matching monitor reaches one of the selected statuses (default CONFIRMED) | Filter by monitor, group or tag; empty filters match all monitors. One run per incident transition. |
 | Schedule | every N minutes (≥ 1) | Missed slots (e.g. during a failover) are skipped, not replayed. |
+| Condition | after a check round of a matching monitor, a metric crosses a threshold (see below) | Filter by monitor, group or tag. Fires when the condition starts holding, then at most once per *repeat* period while it keeps holding. |
+
+### Condition triggers
+A condition compares one value of each matching monitor after every check round:
+
+| Metric | Value | Example |
+|---|---|---|
+| `latency_ms` | average response time of the round across nodes, in ms | `latency_ms > 800` |
+| `status_code` | HTTP status code returned by any node (the condition holds if one code matches) | `status_code ge 500` |
+| `uptime_24h` | availability over the last 24 h, in % | `uptime_24h < 99.5` |
+| `cert_days` | days until the TLS certificate expires (soonest across nodes) | `cert_days < 14` |
+| `status` | monitor status: UP, DEGRADED, SUSPECTED_DOWN, DOWN, UNKNOWN, MAINTENANCE (`eq`/`ne` only) | `status eq DEGRADED` |
+
+Operators: `gt`, `ge`, `lt`, `le`, `eq`, `ne`. When a value is not available (no data yet, a monitor
+type without certificates, a round inside a maintenance window), the condition is *unknown* and
+nothing fires; it does not count as "recovered" either. **Repeat** (default 60 minutes, 1–10080)
+limits how often a run starts per monitor while the condition keeps holding; the run is keyed by
+workflow, monitor and repeat slot, so a leader change never starts the same run twice. A run's context
+contains `monitor_id`, `monitor_name`, `monitor_target`, `monitor_status`, `condition`, `metric` and
+`value`, which script and HTTP steps can use (for example an SSL renewal script or a webhook).
 
 New workflows are **disabled**. Automatic triggers only fire after you enable the workflow; the UI
 warns when you do. Test with **Run now** first.

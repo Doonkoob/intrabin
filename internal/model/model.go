@@ -267,6 +267,19 @@ type RoundResult struct {
 	AvgLatencyMs  *float64  `json:"avg_latency_ms,omitempty"`
 	Slow          bool      `json:"slow"`
 	EvaluatedAt   time.Time `json:"evaluated_at"`
+	// NodeStats are the per-node probe results of the round (replicated with the round so every
+	// node stores the same per-node latency averages).
+	NodeStats []NodeStat `json:"node_stats,omitempty"`
+	// Not replicated: details used by condition triggers on the evaluating node.
+	StatusCodes   []int      `json:"-"`
+	CertExpiresAt *time.Time `json:"-"`
+}
+
+// NodeStat is one node's probe in a round.
+type NodeStat struct {
+	NodeID    string   `json:"node_id"`
+	OK        bool     `json:"ok"`
+	LatencyMs *float64 `json:"latency_ms,omitempty"`
 }
 
 // IncidentStatus values for the incident state machine.
@@ -367,7 +380,7 @@ type ClusterNode struct {
 
 // WorkflowTrigger defines when a workflow starts.
 type WorkflowTrigger struct {
-	Type string `json:"type"` // manual | incident | schedule
+	Type string `json:"type"` // manual | incident | schedule | condition
 	// incident trigger
 	OnStatuses []IncidentStatus `json:"on_statuses,omitempty"`
 	MonitorIDs []string         `json:"monitor_ids,omitempty"`
@@ -375,6 +388,15 @@ type WorkflowTrigger struct {
 	Tags       []string         `json:"tags,omitempty"`
 	// schedule trigger
 	IntervalSeconds int `json:"interval_seconds,omitempty"`
+	// condition trigger: runs when a monitor's metric crosses a limit (uses the monitor filters
+	// above). Metric: latency_ms | status_code | uptime_24h | cert_days | status.
+	Metric    string  `json:"metric,omitempty"`
+	Op        string  `json:"op,omitempty"` // gt | ge | lt | le | eq | ne
+	Threshold float64 `json:"threshold,omitempty"`
+	// StatusValue is compared for metric "status" (UP, DOWN, DEGRADED, ...).
+	StatusValue string `json:"status_value,omitempty"`
+	// RepeatMinutes is the minimum time between two runs for the same monitor (default 60).
+	RepeatMinutes int `json:"repeat_minutes,omitempty"`
 }
 
 // WorkflowStep is one step of a workflow.

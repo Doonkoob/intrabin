@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router'
-import { CheckCircle2, XCircle } from 'lucide-react'
+import { CheckCircle2, ChevronDown, ChevronUp, XCircle } from 'lucide-react'
 import { ApiError, get, post, put } from '../api'
 import { usePrefs } from '../app'
 import { useApi } from '../hooks'
@@ -160,6 +160,11 @@ export function MonitorFormPage() {
     }
   }
 
+  const [showAdv, setShowAdv] = useState(!!id)
+  useEffect(() => {
+    if (Object.keys(fields).some((k) => k.startsWith('settings.') || k.startsWith('policy.') || k === 'node_ids' || k === 'retries' || k === 'description' || k === 'group_id' || k === 'tags')) setShowAdv(true)
+  }, [fields])
+
   const runTest = async () => {
     setTesting(true)
     setTest(null)
@@ -212,7 +217,23 @@ export function MonitorFormPage() {
           <div className="sm:col-span-2"><Field label={t(targetLabel[f.type])} htmlFor="target" error={err('target')}>
             <Input id="target" className="ltr font-mono" placeholder={targetPh[f.type]} value={f.target} onChange={str('target')} invalid={!!err('target')} required />
           </Field></div>
-          <div className="sm:col-span-2"><Field label={t('common.description')} htmlFor="description" optional error={err('description')}><Textarea id="description" value={f.description} onChange={str('description')} rows={2} /></Field></div>
+          <Field label={t('mform.interval')} htmlFor="interval" error={err('interval_seconds')}><Input id="interval" type="number" min={10} value={f.interval_seconds} onChange={num('interval_seconds')} invalid={!!err('interval_seconds')} /></Field>
+          <Field label={t('mform.timeout')} htmlFor="timeout" error={err('timeout_seconds')}><Input id="timeout" type="number" min={1} max={60} value={f.timeout_seconds} onChange={num('timeout_seconds')} invalid={!!err('timeout_seconds')} /></Field>
+          {(f.type === 'http' || f.type === 'tls') && (
+            <Field label={t('mform.certFailDays')} htmlFor="cert_fail" optional help={t('mform.certFailHelp')}><Input id="cert_fail" type="number" min={0} value={f.cert_expiry_fail_days} onChange={num('cert_expiry_fail_days')} /></Field>
+          )}
+          <div className="flex items-end pb-2"><Checkbox label={t('mform.enabled')} checked={f.enabled} onChange={(v) => set('enabled', v)} /></div>
+        </Section>
+
+        <button type="button" onClick={() => setShowAdv(!showAdv)} aria-expanded={showAdv} data-testid="toggle-advanced"
+          className="inline-flex items-center gap-1.5 self-start rounded-lg px-1 text-sm font-medium text-accent hover:underline">
+          {showAdv ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}{showAdv ? t('mform.hideAdvanced') : t('mform.showAdvanced')}
+        </button>
+        {!showAdv && <p className="-mt-3 text-xs text-muted">{t('mform.advancedHint')}</p>}
+
+        {showAdv && (
+          <Section title={t('mform.organize')}>
+            <div className="sm:col-span-2"><Field label={t('common.description')} htmlFor="description" optional error={err('description')}><Textarea id="description" value={f.description} onChange={str('description')} rows={2} /></Field></div>
           <Field label={t('monitors.group')} htmlFor="group" optional error={err('group_id')}>
             <Select id="group" value={f.group_id} onChange={str('group_id')}>
               <option value="">{t('common.none')}</option>
@@ -220,13 +241,11 @@ export function MonitorFormPage() {
             </Select>
           </Field>
           <Field label={t('mform.tags')} htmlFor="tags" help={t('mform.tagsHelp')} optional error={err('tags')}><Input id="tags" value={f.tags} onChange={str('tags')} /></Field>
-          <Field label={t('mform.interval')} htmlFor="interval" error={err('interval_seconds')}><Input id="interval" type="number" min={10} value={f.interval_seconds} onChange={num('interval_seconds')} invalid={!!err('interval_seconds')} /></Field>
-          <Field label={t('mform.timeout')} htmlFor="timeout" error={err('timeout_seconds')}><Input id="timeout" type="number" min={1} max={60} value={f.timeout_seconds} onChange={num('timeout_seconds')} invalid={!!err('timeout_seconds')} /></Field>
-          <Field label={t('mform.retries')} htmlFor="retries" error={err('retries')}><Input id="retries" type="number" min={0} max={5} value={f.retries} onChange={num('retries')} /></Field>
-          <div className="flex items-end pb-2"><Checkbox label={t('mform.enabled')} checked={f.enabled} onChange={(v) => set('enabled', v)} /></div>
-        </Section>
+            <Field label={t('mform.retries')} htmlFor="retries" error={err('retries')}><Input id="retries" type="number" min={0} max={5} value={f.retries} onChange={num('retries')} /></Field>
+          </Section>
+        )}
 
-        {f.type === 'http' && (
+        {showAdv && f.type === 'http' && (
           <Section title={t('mform.request')}>
             <Field label={t('mform.method')} htmlFor="method" error={err('settings.method')}>
               <Select id="method" value={f.method} onChange={str('method')}>{['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].map((m) => <option key={m}>{m}</option>)}</Select>
@@ -253,7 +272,7 @@ export function MonitorFormPage() {
           </Section>
         )}
 
-        {(f.type === 'http' || f.type === 'tls') && (
+        {((showAdv && f.type === 'http') || f.type === 'tls') && (
           <Section title={t('mform.expect')}>
             {f.type === 'http' && <>
               <Field label={t('mform.expectedStatus')} htmlFor="expected_status" help={t('mform.expectedStatusHelp')} optional error={err('settings.expected_status')}>
@@ -262,13 +281,12 @@ export function MonitorFormPage() {
               <Field label={t('mform.expectedBody')} htmlFor="expected_body" optional><Input id="expected_body" value={f.expected_body} onChange={str('expected_body')} /></Field>
               <Field label={t('mform.degradedLatency')} htmlFor="degraded" optional><Input id="degraded" type="number" min={0} value={f.degraded_latency_ms} onChange={num('degraded_latency_ms')} /></Field>
             </>}
-            <Field label={t('mform.certFailDays')} htmlFor="cert_fail" optional><Input id="cert_fail" type="number" min={0} value={f.cert_expiry_fail_days} onChange={num('cert_expiry_fail_days')} /></Field>
             {f.type === 'tls' && <Field label={t('mform.certWarnDays')} htmlFor="cert_warn" optional><Input id="cert_warn" type="number" min={0} value={f.cert_expiry_warn_days} onChange={num('cert_expiry_warn_days')} /></Field>}
             {f.type === 'http' && <div className="flex items-end pb-2"><Checkbox label={t('mform.followRedirects')} checked={f.follow_redirects} onChange={(v) => set('follow_redirects', v)} /></div>}
           </Section>
         )}
 
-        <Section title={t('mform.policy')} help={t('mform.policyHelp')}>
+        {showAdv && <Section title={t('mform.policy')} help={t('mform.policyHelp')}>
           <Field label={t('mform.failMode')} htmlFor="fail_mode" error={err('policy.fail_mode')}>
             <Select id="fail_mode" value={f.policy.fail_mode} onChange={(e) => setP('fail_mode', e.target.value as Policy['fail_mode'])}>
               <option value="consecutive">{t('mform.failMode.consecutive')}</option>
@@ -285,9 +303,9 @@ export function MonitorFormPage() {
           <Field label={t('mform.minValid')} htmlFor="min_valid" error={err('policy.min_valid_probes')}><Input id="min_valid" type="number" min={1} value={f.policy.min_valid_probes} onChange={(e) => setP('min_valid_probes', Number(e.target.value))} /></Field>
           <Field label={t('mform.cooldown')} htmlFor="cooldown" error={err('policy.cooldown_seconds')}><Input id="cooldown" type="number" min={0} value={f.policy.cooldown_seconds} onChange={(e) => setP('cooldown_seconds', Number(e.target.value))} /></Field>
           <p className="rounded-lg bg-accent-soft p-3 text-sm text-fg sm:col-span-2" data-testid="policy-summary">{summary}</p>
-        </Section>
+        </Section>}
 
-        {members.length > 1 && (
+        {showAdv && members.length > 1 && (
           <Section title={t('mform.nodes')} help={t('mform.nodesHelp')}>
             <fieldset className="flex flex-col gap-2 sm:col-span-2" data-testid="node-selector">
               <legend className="sr-only">{t('mform.nodes')}</legend>
@@ -301,7 +319,7 @@ export function MonitorFormPage() {
           </Section>
         )}
 
-        {(f.type === 'http' || f.type === 'tls') && (
+        {showAdv && (f.type === 'http' || f.type === 'tls') && (
           <Section title={t('mform.advanced')}>
             <Field label={t('mform.origin')} htmlFor="origin" help={t('mform.originHelp')} optional error={err('settings.origin_address')}>
               <Input id="origin" className="ltr" placeholder="203.0.113.10" value={f.origin_address} onChange={str('origin_address')} invalid={!!err('settings.origin_address')} />
@@ -312,7 +330,7 @@ export function MonitorFormPage() {
           </Section>
         )}
 
-        {f.type === 'http' && (
+        {showAdv && f.type === 'http' && (
           <Section title={t('mform.secrets')} help={t('mform.secretsHelp')}>
             {existing && existing.secret_keys.length > 0 && (
               <p className="text-sm text-muted sm:col-span-2">{t('mform.storedSecrets', { keys: existing.secret_keys.join(', ') })}</p>

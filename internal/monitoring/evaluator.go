@@ -45,6 +45,14 @@ func RoundVerdict(in RoundInput) *model.RoundResult {
 	latN, slowN, okN := 0, 0, 0
 	failLocs := map[string]bool{}
 	for nodeID, r := range latest {
+		rr.NodeStats = append(rr.NodeStats, model.NodeStat{NodeID: nodeID, OK: r.Success, LatencyMs: r.LatencyMs})
+		if r.HTTPStatus != nil {
+			rr.StatusCodes = append(rr.StatusCodes, *r.HTTPStatus)
+		}
+		if r.CertExpiresAt != nil && (rr.CertExpiresAt == nil || r.CertExpiresAt.Before(*rr.CertExpiresAt)) {
+			t := *r.CertExpiresAt
+			rr.CertExpiresAt = &t
+		}
 		rr.ValidProbes++
 		if r.Success {
 			okN++
@@ -62,6 +70,8 @@ func RoundVerdict(in RoundInput) *model.RoundResult {
 		}
 	}
 	sort.Strings(rr.FailingNodes)
+	sort.Slice(rr.NodeStats, func(i, j int) bool { return rr.NodeStats[i].NodeID < rr.NodeStats[j].NodeID })
+	sort.Ints(rr.StatusCodes)
 	if latN > 0 {
 		avg := latSum / float64(latN)
 		rr.AvgLatencyMs = &avg

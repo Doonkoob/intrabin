@@ -440,6 +440,11 @@ func (x *Executor) Execute(ctx context.Context, cmd *Command) error {
 		if dec(&p) {
 			err = st.PruneRuns(ctx, p.Now)
 		}
+	case "audit.prune":
+		var p expirePayload
+		if dec(&p) {
+			err = st.PruneAudit(ctx, p.Now)
+		}
 	case "dnsprovider.create", "dnsprovider.update":
 		var p dnsProviderWire
 		if dec(&p) {

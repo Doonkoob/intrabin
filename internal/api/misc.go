@@ -3,6 +3,7 @@ package api
 import (
 	_ "embed"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -340,6 +341,9 @@ type Settings struct {
 	RawRetentionDays  int    `json:"raw_retention_days"`
 	RoundRetentionDay int    `json:"round_retention_days"`
 	HourlyRetention   int    `json:"hourly_retention_days"`
+	// LogRetentionDays is the retention preset (7, 15, 30, 90, 180 or 365) for all history; 0 = custom.
+	LogRetentionDays int   `json:"log_retention_days"`
+	LogRetentionOpts []int `json:"log_retention_choices"`
 }
 
 func (s *Server) loadSettings(r *http.Request) Settings {
@@ -360,6 +364,8 @@ func (s *Server) loadSettings(r *http.Request) Settings {
 	st.RawRetentionDays = atoi("retention.raw_days", st.RawRetentionDays)
 	st.RoundRetentionDay = atoi("retention.rounds_days", st.RoundRetentionDay)
 	st.HourlyRetention = atoi("retention.hourly_days", st.HourlyRetention)
+	st.LogRetentionDays = atoi("retention.logs_days", 0)
+	st.LogRetentionOpts = storage.LogRetentionChoices
 	return st
 }
 
@@ -373,6 +379,7 @@ type settingsPatch struct {
 	RawRetentionDays   *int    `json:"raw_retention_days"`
 	RoundRetentionDays *int    `json:"round_retention_days"`
 	HourlyRetention    *int    `json:"hourly_retention_days"`
+	LogRetentionDays   *int    `json:"log_retention_days"`
 }
 
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -409,6 +416,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	checkDays("raw_retention_days", "retention.raw_days", req.RawRetentionDays, 1, 90)
 	checkDays("round_retention_days", "retention.rounds_days", req.RoundRetentionDays, 7, 400)
 	checkDays("hourly_retention_days", "retention.hourly_days", req.HourlyRetention, 30, 1825)
+	if req.LogRetentionDays != nil {
+		if *req.LogRetentionDays != 0 && !slices.Contains(storage.LogRetentionChoices, *req.LogRetentionDays) {
+			f["log_retention_days"] = "Choose 7, 15, 30, 90, 180 or 365 days."
+		}
+		set["retention.logs_days"] = strconv.Itoa(*req.LogRetentionDays)
+	}
 	if len(f) > 0 {
 		s.writeErr(w, r, errValidation(f))
 		return

@@ -66,6 +66,8 @@ type Engine struct {
 	mu          sync.Mutex
 	inflight    map[string]bool      // run IDs being processed by this node
 	nextAttempt map[string]time.Time // action ID -> earliest next reconciliation attempt
+	condActive  map[string]bool      // workflow/monitor -> condition held at the last known round
+	condFired   map[string]time.Time // workflow/monitor -> round of the last condition run
 	once        sync.Once
 }
 
@@ -80,6 +82,8 @@ func (e *Engine) init() {
 		e.kick = make(chan struct{}, 1)
 		e.inflight = map[string]bool{}
 		e.nextAttempt = map[string]time.Time{}
+		e.condActive = map[string]bool{}
+		e.condFired = map[string]time.Time{}
 		if e.Interval <= 0 {
 			e.Interval = time.Second
 		}

@@ -67,6 +67,7 @@ func (s *Server) normalizeWorkflow(r *http.Request, in *workflowInput) map[strin
 		*t = model.WorkflowTrigger{Type: "manual"}
 	case "incident":
 		t.IntervalSeconds = 0
+		t.Metric, t.Op, t.Threshold, t.StatusValue, t.RepeatMinutes = "", "", 0, "", 0
 		if len(t.OnStatuses) == 0 {
 			t.OnStatuses = []model.IncidentStatus{model.IncidentConfirmed}
 		}
@@ -83,13 +84,50 @@ func (s *Server) normalizeWorkflow(r *http.Request, in *workflowInput) map[strin
 		if len(t.GroupIDs) > 50 || len(t.Tags) > 50 || len(t.MonitorIDs) > 200 {
 			f["trigger"] = "Too many filters."
 		}
+	case "condition":
+		*t = model.WorkflowTrigger{Type: "condition", MonitorIDs: t.MonitorIDs, GroupIDs: t.GroupIDs, Tags: t.Tags, Metric: t.Metric, Op: t.Op,
+			Threshold: t.Threshold, StatusValue: strings.ToUpper(strings.TrimSpace(t.StatusValue)), RepeatMinutes: t.RepeatMinutes}
+		if !slices.Contains(automation.ConditionMetrics, t.Metric) {
+			f["trigger.metric"] = "Choose latency_ms, status_code, uptime_24h, cert_days or status."
+		}
+		if t.Metric == "status" {
+			if t.Op != "eq" && t.Op != "ne" {
+				f["trigger.op"] = "A status condition uses equals or not equals."
+			}
+			if !slices.Contains([]string{"UP", "DEGRADED", "SUSPECTED_DOWN", "DOWN", "UNKNOWN", "MAINTENANCE"}, t.StatusValue) {
+				f["trigger.status_value"] = "Choose UP, DEGRADED, SUSPECTED_DOWN, DOWN, UNKNOWN or MAINTENANCE."
+			}
+			t.Threshold = 0
+		} else {
+			t.StatusValue = ""
+			if !slices.Contains(automation.ConditionOps, t.Op) {
+				f["trigger.op"] = "Unknown comparison."
+			}
+			if t.Threshold < 0 || t.Threshold > 1e7 || (t.Metric == "uptime_24h" && t.Threshold > 100) {
+				f["trigger.threshold"] = "Out of range."
+			}
+		}
+		if t.RepeatMinutes == 0 {
+			t.RepeatMinutes = int(automation.DefaultRepeat / time.Minute)
+		}
+		if t.RepeatMinutes < 1 || t.RepeatMinutes > 7*24*60 {
+			f["trigger.repeat_minutes"] = "Between 1 minute and 7 days."
+		}
+		for _, id := range t.MonitorIDs {
+			if _, err := s.store.GetMonitor(r.Context(), id); err != nil {
+				f["trigger.monitor_ids"] = "Unknown monitor."
+			}
+		}
+		if len(t.GroupIDs) > 50 || len(t.Tags) > 50 || len(t.MonitorIDs) > 200 {
+			f["trigger"] = "Too many filters."
+		}
 	case "schedule":
 		*t = model.WorkflowTrigger{Type: "schedule", IntervalSeconds: t.IntervalSeconds}
 		if t.IntervalSeconds < 60 || t.IntervalSeconds > 30*86400 {
 			f["trigger.interval_seconds"] = "Interval must be between 60 seconds and 30 days."
 		}
 	default:
-		f["trigger.type"] = "Trigger must be manual, incident or schedule."
+		f["trigger.type"] = "Trigger must be manual, incident, schedule or condition."
 	}
 	if len(in.Steps) == 0 || len(in.Steps) > 50 {
 		f["steps"] = "A workflow needs between 1 and 50 steps."

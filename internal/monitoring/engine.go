@@ -60,8 +60,10 @@ type Engine struct {
 	ResultSink func(ctx context.Context, rs []*model.CheckResult) error
 	// Retention returns raw, round and hourly retention durations.
 	Retention func(ctx context.Context) (raw, rounds, hourly time.Duration)
-	Workers   int
-	Now       func() time.Time
+	// OnRound is called after a round verdict was recorded (condition triggers).
+	OnRound func(ctx context.Context, m *model.Monitor, rr *model.RoundResult, st model.MonitorState)
+	Workers int
+	Now     func() time.Time
 
 	reload    chan struct{}
 	mu        sync.Mutex
@@ -327,6 +329,9 @@ func (e *Engine) evaluateRound(ctx context.Context, m *model.Monitor, st *model.
 	}
 	metrics.RoundsTotal.WithLabelValues(string(rr.Verdict)).Inc()
 	*st = ns
+	if e.OnRound != nil {
+		e.OnRound(ctx, m, rr, ns)
+	}
 	if ns.Status != prev.Status && e.Incidents != nil {
 		cat := ""
 		for _, r := range results {

@@ -190,7 +190,26 @@ export interface Settings {
   raw_retention_days: number
   round_retention_days: number
   hourly_retention_days: number
+  log_retention_days: number
+  log_retention_choices: number[]
 }
+
+export interface StorageInfo {
+  node: string
+  usage: { database_bytes: number; wal_bytes: number; total_bytes: number; tables: { name: string; rows: number; bytes: number }[] }
+  retention: { logs_days: number; raw_days: number; rounds_days: number; hourly_days: number; audit_days: number; runs_days: number }
+  max_raw_days: number
+}
+
+export interface NodeCell { probes: number; failures: number; avg_latency_ms: number | null }
+
+export interface NodeLatency {
+  window: string
+  nodes: ({ id: string; name: string } & NodeCell)[]
+  monitors: { id: string; name: string; target: string; nodes: Record<string, NodeCell> }[]
+}
+
+export interface CertInfo { id: string; name: string; target: string; expires_at: string | null; days_left: number | null; warn_days: number; fail_days: number }
 
 export interface ClusterMember {
   id: string
@@ -271,9 +290,16 @@ export interface WorkflowStep {
   proxied?: boolean
 }
 
+export type ConditionMetric = 'latency_ms' | 'status_code' | 'uptime_24h' | 'cert_days' | 'status'
+
 export interface WorkflowTrigger {
-  type: 'manual' | 'incident' | 'schedule'
+  type: 'manual' | 'incident' | 'schedule' | 'condition'
   on_statuses?: IncidentStatus[]
+  metric?: ConditionMetric
+  op?: 'gt' | 'ge' | 'lt' | 'le' | 'eq' | 'ne'
+  threshold?: number
+  status_value?: string
+  repeat_minutes?: number
   monitor_ids?: string[]
   group_ids?: string[]
   tags?: string[]

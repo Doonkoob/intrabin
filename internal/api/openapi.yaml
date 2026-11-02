@@ -37,7 +37,12 @@ components:
         trigger:
           type: object
           properties:
-            type: { type: string, enum: [manual, incident, schedule] }
+            type: { type: string, enum: [manual, incident, schedule, condition] }
+            metric: { type: string, enum: [latency_ms, status_code, uptime_24h, cert_days, status], description: "condition: the value compared after each check round" }
+            op: { type: string, enum: [gt, ge, lt, le, eq, ne], description: "condition: comparison (status allows eq and ne only)" }
+            threshold: { type: number, description: "condition: number compared with the metric" }
+            status_value: { type: string, enum: [UP, DEGRADED, SUSPECTED_DOWN, DOWN, UNKNOWN, MAINTENANCE], description: "condition with metric status" }
+            repeat_minutes: { type: integer, minimum: 1, maximum: 10080, default: 60, description: "condition: while the condition keeps holding, start at most one run per this many minutes per monitor" }
             on_statuses: { type: array, items: { type: string }, description: "incident: statuses that start a run (default CONFIRMED)" }
             monitor_ids: { type: array, items: { type: string } }
             group_ids: { type: array, items: { type: string } }
@@ -336,6 +341,13 @@ paths:
     post: { summary: Create window (monitor_id empty = all monitors), responses: { '201': { description: Created } } }
   /maintenance-windows/{id}: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], delete: { summary: Delete window, responses: { '200': { description: OK } } } }
   /overview: { get: { summary: Dashboard aggregates, responses: { '200': { description: OK } } } }
+  /overview/node-latency:
+    get:
+      summary: "Average latency and failed probes per monitoring node, overall and per monitor (from hourly aggregates)"
+      parameters: [{ name: window, in: query, schema: { type: string, enum: ['1h', '24h', '7d', '30d'], default: '24h' } }]
+      responses: { '200': { description: "{ window, nodes: [{ id, name, probes, failures, avg_latency_ms }], monitors: [{ id, name, nodes: { node_id: cell } }] }" } }
+  /overview/certificates: { get: { summary: "TLS certificate expiry for HTTP(S) and TLS monitors, soonest first (days_left, expires_at, cert_fail_days)", responses: { '200': { description: OK } } } }
+  /system/storage: { get: { summary: "Database size on this node (file and per-table bytes and rows) and the retention in force", responses: { '200': { description: OK } } } }
   /audit-logs:
     get:
       summary: Searchable audit log (audit.view)
@@ -343,7 +355,7 @@ paths:
       responses: { '200': { description: OK } }
   /settings:
     get: { summary: Instance settings, responses: { '200': { description: OK } } }
-    patch: { summary: Update instance settings (settings.manage), responses: { '200': { description: OK } } }
+    patch: { summary: "Update instance settings (settings.manage). log_retention_days: 7, 15, 30, 90, 180, 365, or 0 for the custom per-type retention fields; log_retention_choices is read-only", responses: { '200': { description: OK }, '422': { $ref: '#/components/responses/Error' } } }
   /node: { get: { summary: Local node status (available on every node, including followers), responses: { '200': { description: OK } } } }
   /cluster: { get: { summary: "Cluster status: role, leader, Raft term and indexes, mesh gate, members, reachability matrix, warnings", responses: { '200': { description: OK } } } }
   /cluster/init:

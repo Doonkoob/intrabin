@@ -61,6 +61,9 @@ var replicatedTables = []tableSpec{
 	{name: "monitor_hourly", merge: true, where: func(now time.Time) (string, []any) {
 		return "hour >= ?", []any{ms(now.Add(-35 * 24 * time.Hour))}
 	}},
+	{name: "monitor_node_hourly", merge: true, where: func(now time.Time) (string, []any) {
+		return "hour >= ?", []any{ms(now.Add(-35 * 24 * time.Hour))}
+	}},
 }
 
 // Cell is one typed SQLite value in a dump.
@@ -251,6 +254,7 @@ func (s *Store) RestoreReplicated(ctx context.Context, data []byte) error {
 		`DELETE FROM check_results WHERE monitor_id NOT IN (SELECT id FROM monitors)`,
 		`DELETE FROM round_results WHERE monitor_id NOT IN (SELECT id FROM monitors)`,
 		`DELETE FROM monitor_hourly WHERE monitor_id NOT IN (SELECT id FROM monitors)`,
+		`DELETE FROM monitor_node_hourly WHERE monitor_id NOT IN (SELECT id FROM monitors)`,
 		`DELETE FROM result_outbox WHERE result_id NOT IN (SELECT id FROM check_results)`,
 	} {
 		if _, err := tx.ExecContext(ctx, q); err != nil {
@@ -268,7 +272,7 @@ func (s *Store) WipeReplicated(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, q := range []string{"result_outbox", "check_results", "round_results", "monitor_hourly"} {
+	for _, q := range []string{"result_outbox", "check_results", "round_results", "monitor_hourly", "monitor_node_hourly"} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+q); err != nil {
 			return err
 		}

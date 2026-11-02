@@ -15,7 +15,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -136,6 +135,7 @@ func serve() error {
 	}
 	auto := &automation.Engine{Store: store, CP: cp, Incidents: incMgr, Fence: clusterMgr.Fence, Active: n.CanManage, Box: box, Runner: runnerClient, DNS: dnsSvc, Log: log.With("component", "automation")}
 	incMgr.OnTransition(auto.OnIncidentTransition)
+	engine.OnRound = auto.OnRound
 	drMgr := &dr.Manager{Store: store, CP: cp, Engine: auto, DNS: dnsSvc, Fence: clusterMgr.Fence, Active: n.CanManage, Log: log.With("component", "dr")}
 	incMgr.OnTransition(drMgr.OnIncidentTransition)
 	cp.X.OnApplied(func(op string) {
@@ -171,7 +171,7 @@ func serve() error {
 	go engine.Run(ctx)
 	go auto.Run(ctx)
 	go drMgr.Run(ctx)
-	go housekeeping(ctx, cp, n, log)
+	go housekeeping(ctx, store, cp, n, log)
 	go dnsReconciler(ctx, dnsSvc, n)
 	go autoCluster(ctx, cfg, clusterMgr, log)
 
@@ -202,19 +202,12 @@ func serve() error {
 
 func retention(store *storage.Store) func(ctx context.Context) (time.Duration, time.Duration, time.Duration) {
 	return func(ctx context.Context) (time.Duration, time.Duration, time.Duration) {
-		get := func(k string, def int) time.Duration {
-			v, err := store.GetSetting(ctx, k)
-			n, err2 := strconv.Atoi(v)
-			if err != nil || err2 != nil || n <= 0 {
-				n = def
-			}
-			return time.Duration(n) * 24 * time.Hour
-		}
-		return get("retention.raw_days", 14), get("retention.rounds_days", 90), get("retention.hourly_days", 400)
+		r := store.Retention(ctx)
+		return r.Raw, r.Rounds, r.Hourly
 	}
 }
 
-func housekeeping(ctx context.Context, cp *controlplane.CP, n *node.Node, log *slog.Logger) {
+func housekeeping(ctx context.Context, store *storage.Store, cp *controlplane.CP, n *node.Node, log *slog.Logger) {
 	t := time.NewTicker(15 * time.Minute)
 	defer t.Stop()
 	for {
@@ -228,8 +221,12 @@ func housekeeping(ctx context.Context, cp *controlplane.CP, n *node.Node, log *s
 			if err := cp.DeleteExpiredSessions(ctx, time.Now().UTC(), 12*time.Hour); err != nil {
 				log.Error("session cleanup", "err", err)
 			}
-			if err := cp.PruneRuns(ctx, time.Now().UTC().Add(-90*24*time.Hour)); err != nil {
+			ret := store.Retention(ctx)
+			if err := cp.PruneRuns(ctx, time.Now().UTC().Add(-ret.Runs)); err != nil {
 				log.Error("workflow run cleanup", "err", err)
+			}
+			if err := cp.PruneAudit(ctx, time.Now().UTC().Add(-ret.Audit)); err != nil {
+				log.Error("audit log cleanup", "err", err)
 			}
 			// Keep DNS snapshots for 90 days, and always the newest 20 per zone.
 			if err := cp.PruneDNSSnapshots(ctx, time.Now().UTC().Add(-90*24*time.Hour), 20); err != nil {

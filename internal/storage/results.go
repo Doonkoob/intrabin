@@ -170,6 +170,23 @@ func (s *Store) RecordRound(ctx context.Context, rr *model.RoundResult, st *mode
 			rr.MonitorID, ms(hour), ok, partial, failed, inc, maint, latSum, latCount); err != nil {
 			return err
 		}
+		// Per-node probe statistics are network measurements, not uptime verdicts, so they are
+		// kept during maintenance windows too (uptime above excludes them).
+		for _, ns := range rr.NodeStats {
+			fail, lsum, lcount := 0, 0.0, 0
+			if !ns.OK {
+				fail = 1
+			} else if ns.LatencyMs != nil {
+				lsum, lcount = *ns.LatencyMs, 1
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO monitor_node_hourly(monitor_id,node_id,hour,probes,failures,latency_sum,latency_count) VALUES(?,?,?,1,?,?,?)
+				ON CONFLICT(monitor_id,node_id,hour) DO UPDATE SET probes=probes+1, failures=failures+excluded.failures,
+				latency_sum=latency_sum+excluded.latency_sum, latency_count=latency_count+excluded.latency_count`,
+				rr.MonitorID, ns.NodeID, ms(hour), fail, lsum, lcount); err != nil {
+				return err
+			}
+		}
+
 	}
 	if err := saveState(ctx, tx, st); err != nil {
 		return err
@@ -426,6 +443,7 @@ func (s *Store) Prune(ctx context.Context, rawBefore, roundsBefore, hourlyBefore
 		{`DELETE FROM check_results WHERE probe_at < ?`, rawBefore},
 		{`DELETE FROM round_results WHERE round_start < ?`, roundsBefore},
 		{`DELETE FROM monitor_hourly WHERE hour < ?`, hourlyBefore},
+		{`DELETE FROM monitor_node_hourly WHERE hour < ?`, hourlyBefore},
 	} {
 		res, err := s.DB.ExecContext(ctx, q.sql, ms(q.t))
 		if err != nil {
@@ -497,6 +515,45 @@ func (s *Store) GlobalDailyUptime(ctx context.Context, days int, now time.Time) 
 	}
 	for i := range out {
 		finishStats(&out[i].UptimeStats, sums[i], cnts[i])
+	}
+	return out, rows.Err()
+}
+
+// NodeLatency is the average latency and failure count of one monitor (or all) from one node.
+type NodeLatency struct {
+	MonitorID    string   `json:"monitor_id"`
+	NodeID       string   `json:"node_id"`
+	Probes       int      `json:"probes"`
+	Failures     int      `json:"failures"`
+	AvgLatencyMs *float64 `json:"avg_latency_ms"`
+}
+
+// NodeLatencies aggregates per-node probe statistics since the given hour. With byMonitor false
+// the rows are per node across all monitors (MonitorID empty).
+func (s *Store) NodeLatencies(ctx context.Context, since time.Time, byMonitor bool) ([]NodeLatency, error) {
+	group, sel := "node_id", "''"
+	if byMonitor {
+		group, sel = "monitor_id, node_id", "monitor_id"
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+sel+`, node_id, SUM(probes), SUM(failures), SUM(latency_sum), SUM(latency_count)
+		FROM monitor_node_hourly WHERE hour >= ? GROUP BY `+group+` ORDER BY 1, 2`, ms(since.UTC().Truncate(time.Hour)))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []NodeLatency{}
+	for rows.Next() {
+		var n NodeLatency
+		var sum float64
+		var cnt int
+		if err := rows.Scan(&n.MonitorID, &n.NodeID, &n.Probes, &n.Failures, &sum, &cnt); err != nil {
+			return nil, err
+		}
+		if cnt > 0 {
+			avg := sum / float64(cnt)
+			n.AvgLatencyMs = &avg
+		}
+		out = append(out, n)
 	}
 	return out, rows.Err()
 }

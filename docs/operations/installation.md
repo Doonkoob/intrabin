@@ -119,6 +119,17 @@ With the installer, `intrabin password` does the same (random or typed password)
 changed with `intrabin rename` (`intrabin rename-user -user old -to new` inside the container), and
 `intrabin backup -out -` streams a consistent database copy to stdout.
 
+## Data retention and database size
+**Settings → Instance → Keep history for** chooses how long history is kept: 7 days, 15 days, 1, 3, 6
+or 12 months. Older check results, rounds, hourly uptime and per-node latency aggregates, audit
+entries and finished workflow runs are deleted automatically (housekeeping every 15 minutes on the active
+controller; deletions are replicated). Individual check results are kept at most 90 days even with
+longer presets; the hourly aggregates keep uptime and latency history for the full period. **Custom
+(advanced)** restores the separate per-type fields. The **Storage** card shows the database size on
+this node and the size and row count of each data type (`GET /api/v1/system/storage`). SQLite reuses
+freed pages, so the file shrinks only after a `VACUUM`; the size stops growing once history reaches the
+retention period.
+
 ## Monitoring Intrabin itself
 * `GET /api/v1/health` — liveness (used by the container health check).
 * `GET /api/v1/readiness` — database reachability.
