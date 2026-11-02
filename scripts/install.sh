@@ -351,7 +351,8 @@ write_config() {
 set_release_images() {
   local env="$1" owner
   if [[ -n "$RELEASE" ]]; then
-    owner=$(sed -E 's#^https?://github\.com/([^/]+)/.*#\1#' <<<"$REPO_URL" | tr '[:upper:]' '[:lower:]')
+    [[ "$REPO_URL" =~ ^https://github\.com/([A-Za-z0-9_.-]+)/ ]] || die "--release needs a https://github.com/<owner>/<repo> repository"
+    owner=$(tr '[:upper:]' '[:lower:]' <<<"${BASH_REMATCH[1]}")
     set_env "$env" INTRABIN_IMAGE "ghcr.io/$owner/intrabin:$RELEASE"
     set_env "$env" INTRABIN_RUNNER_IMAGE "ghcr.io/$owner/intrabin-runner:$RELEASE"
     set_env "$env" INTRABIN_VERSION "$RELEASE"
