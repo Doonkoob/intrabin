@@ -36,7 +36,7 @@ custom Compose settings in `/opt/intrabin/compose.override.yaml`, which is never
 `intrabin` opens an interactive menu; `intrabin help` lists the direct commands: `status`,
 `start|stop|restart`, `logs [intrabin|caddy|runner]`, `password [user]`, `rename [user] [new]`,
 `users`, `domain`, `runner on|off`, `backup` (database + `.env` + key file into
-`/opt/intrabin/backups/*.tar.gz`, mode 600), `update` (backs up, pulls, rebuilds, restarts),
+`/opt/intrabin/backups/*.tar.gz`, mode 600), `restore [file]`, `update` (backs up, pulls, rebuilds, restarts),
 `info`, `uninstall` (data volumes are deleted only after typing `DELETE`). Password and username
 changes run the offline commands below inside the container and are refused on cluster members.
 
@@ -79,12 +79,22 @@ docker compose cp intrabin:/var/lib/intrabin/master.key ./   # store separately 
 Without the master key, encrypted monitor credentials cannot be recovered.
 
 ## Restore
+With the installer: `intrabin restore` lists the backups in `/opt/intrabin/backups` (or pass a
+`.tar.gz` file). It takes a safety backup of the current data, offers to switch to the backup's
+master key if it differs, stops Intrabin, restores and starts it again.
+
+Manually (standalone nodes only; the server must be stopped):
 ```bash
-docker compose down
-docker run --rm -v intrabin_intrabin-data:/data -v "$PWD":/backup alpine \
-  sh -c 'cp /backup/backup-YYYY-MM-DD.db /data/intrabin.db && rm -f /data/intrabin.db-wal /data/intrabin.db-shm && cp /backup/master.key /data/ && chown 65532:65532 /data/*'
+docker compose stop intrabin
+docker compose run --rm --no-deps -v "$PWD/restore:/restore:ro" intrabin \
+  restore -in /restore/backup.db [-key /restore/master.key]
 docker compose up -d
 ```
+`intrabin restore` checks the file (SQLite integrity check, Intrabin schema), refuses backups from
+cluster members and cluster nodes, keeps the current database as `intrabin.db.pre-restore-<time>`,
+applies newer migrations and writes an audit entry. The files in `restore/` must be readable by
+UID 65532. Without the matching master key (`INTRABIN_MASTER_KEY` or `master.key`), stored
+credentials (monitor secrets, DNS tokens) cannot be decrypted.
 
 ## Upgrade
 ```bash

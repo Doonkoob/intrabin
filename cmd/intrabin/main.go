@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -50,6 +51,8 @@ func main() {
 			os.Exit(backup(os.Args[2:]))
 		case "rename-user":
 			os.Exit(renameUser(os.Args[2:]))
+		case "restore":
+			os.Exit(restore(os.Args[2:]))
 		case "list-users":
 			os.Exit(listUsers())
 		case "runner":
@@ -58,7 +61,7 @@ func main() {
 			os.Exit(runner.ExecWrapper(os.Args[2:]))
 		case "serve":
 		default:
-			fmt.Fprintf(os.Stderr, "usage: intrabin [serve|runner|healthcheck|version|reset-password|rename-user|list-users|backup]\n")
+			fmt.Fprintf(os.Stderr, "usage: intrabin [serve|runner|healthcheck|version|reset-password|rename-user|list-users|backup|restore]\n")
 			os.Exit(2)
 		}
 	}
@@ -508,6 +511,89 @@ func backup(args []string) int {
 	}
 	fmt.Println("backup written to", *out, "- also back up master.key (or INTRABIN_MASTER_KEY) separately")
 	return 0
+}
+
+// restore replaces the database (and optionally the key file) with a backup. The server must be
+// stopped. The current database is kept as intrabin.db.pre-restore-<time>.
+func restore(args []string) int {
+	fs := flag.NewFlagSet("restore", flag.ExitOnError)
+	in := fs.String("in", "", "backup database file (from `intrabin backup`)")
+	key := fs.String("key", "", "optional master.key file from the same backup (only when INTRABIN_MASTER_KEY is not set)")
+	_ = fs.Parse(args)
+	if *in == "" {
+		fmt.Fprintln(os.Stderr, "usage: intrabin restore -in /path/backup.db [-key /path/master.key]  (stop the server first)")
+		return 2
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	ctx := context.Background()
+	info, err := storage.InspectBackup(ctx, *in)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "backup rejected:", err)
+		return 1
+	}
+	if info.ClusterMode {
+		fmt.Fprintln(os.Stderr, "this backup comes from a cluster member; restoring it on its own would diverge from the cluster. See docs/operations/cluster.md (recovery).")
+		return 1
+	}
+	dbPath := filepath.Join(cfg.DataDir, "intrabin.db")
+	if cur, err := storage.InspectBackup(ctx, dbPath); err == nil && cur.ClusterMode {
+		fmt.Fprintln(os.Stderr, "this node is a cluster member: restore is only supported on a standalone node.")
+		return 1
+	}
+	if c, err := net.DialTimeout("tcp", "127.0.0.1"+listenPort(cfg.Listen), time.Second); err == nil {
+		c.Close()
+		fmt.Fprintln(os.Stderr, "Intrabin seems to be running on this host/container: stop it first.")
+		return 1
+	}
+	if *key != "" {
+		if os.Getenv("INTRABIN_MASTER_KEY") != "" {
+			fmt.Fprintln(os.Stderr, "INTRABIN_MASTER_KEY is set, so a key file is not used: set INTRABIN_MASTER_KEY to the key of the backup instead.")
+			return 1
+		}
+		b, err := os.ReadFile(*key)
+		if err != nil || len(b) == 0 {
+			fmt.Fprintln(os.Stderr, "cannot read the key file")
+			return 1
+		}
+		keyPath := filepath.Join(cfg.DataDir, "master.key")
+		if _, err := os.Stat(keyPath); err == nil {
+			_ = os.Rename(keyPath, keyPath+".pre-restore-"+time.Now().UTC().Format("20060102-150405"))
+		}
+		if err := os.WriteFile(keyPath, b, 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, "write key:", err)
+			return 1
+		}
+	}
+	kept, err := storage.ReplaceDatabase(*in, dbPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "restore failed:", err)
+		return 1
+	}
+	// Opening applies any newer migrations and proves the restored file works.
+	st, err := storage.Open(ctx, dbPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "restored database cannot be opened:", err)
+		return 1
+	}
+	audit.New(st, slog.Default()).Record(ctx, audit.Actor{Name: "cli"}, "system.restore", "", "", "", map[string]any{"users": info.Users, "monitors": info.Monitors})
+	st.Close()
+	fmt.Printf("restored: %d users, %d monitors", info.Users, info.Monitors)
+	if kept != "" {
+		fmt.Printf(" (previous database kept as %s)", filepath.Base(kept))
+	}
+	fmt.Println()
+	return 0
+}
+
+func listenPort(listen string) string {
+	if i := strings.LastIndex(listen, ":"); i >= 0 {
+		return listen[i:]
+	}
+	return ":8080"
 }
 
 // runRunner starts the isolated Action Runner (`intrabin runner`). It is meant to run as its own

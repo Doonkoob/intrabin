@@ -64,7 +64,7 @@ Other options: `--no-domain`, `--no-runner`, `--docker-mirror URL`, `--goproxy U
 ### Management menu
 After installation run **`intrabin`** for an interactive menu (service status, start/stop/restart,
 logs, change password or username, list users, set or change the domain and SSL, enable or disable
-the Action Runner, backup, update, uninstall). Every item is also a direct command, for example
+the Action Runner, backup, restore, update, uninstall). Every item is also a direct command, for example
 `intrabin status`, `intrabin password`, `intrabin backup`, `intrabin update`.
 
 ### نصب سریع (فارسی)

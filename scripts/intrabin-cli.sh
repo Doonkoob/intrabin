@@ -235,6 +235,48 @@ cmd_backup() {
   echo "   It contains the database and the configuration with the master key: keep it somewhere safe, off this server."
 }
 
+cmd_restore() {
+  local file="${1:-}" tmp bkey ckey args=()
+  if [[ -z "$file" ]]; then
+    local list=() i=1 f
+    while IFS= read -r f; do list+=("$f"); done < <(ls -1t "$INSTALL_DIR"/backups/*.tar.gz 2>/dev/null)
+    [[ ${#list[@]} -gt 0 ]] || die "no backups in $INSTALL_DIR/backups (pass a file: intrabin restore /path/backup.tar.gz)"
+    for f in "${list[@]}"; do printf '  %s%2d)%s %s\n' "$C" "$i" "$N" "$(basename "$f")"; i=$((i + 1)); done
+    local pick; ask pick "Backup to restore" "1"
+    [[ "$pick" =~ ^[0-9]+$ && "$pick" -ge 1 && "$pick" -le ${#list[@]} ]] || die "invalid choice"
+    file="${list[$((pick - 1))]}"
+  fi
+  [[ -f "$file" ]] || die "not found: $file"
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' RETURN
+  tar -xzf "$file" -C "$tmp" ./intrabin.db ./env 2>/dev/null || tar -xzf "$file" -C "$tmp" || die "cannot read $file"
+  tar -xzf "$file" -C "$tmp" ./master.key 2>/dev/null || true
+  [[ -s "$tmp/intrabin.db" ]] || die "$file does not contain intrabin.db"
+  warn "This replaces ALL current data (monitors, incidents, users, settings) with the backup."
+  confirm "Restore $(basename "$file")" "n" || return 0
+  bkey=$(grep -E '^INTRABIN_MASTER_KEY=' "$tmp/env" 2>/dev/null | tail -n1 | cut -d= -f2- || true)
+  ckey=$(get_env INTRABIN_MASTER_KEY)
+  if [[ -n "$bkey" && "$bkey" != "$ckey" ]]; then
+    warn "The backup was encrypted with a different master key than the current configuration."
+    if confirm "Use the backup's master key (needed to read its stored credentials)" "y"; then
+      cp "$ENV_FILE" "$ENV_FILE.pre-restore"; chmod 600 "$ENV_FILE.pre-restore"
+      set_env INTRABIN_MASTER_KEY "$bkey"
+    fi
+  elif [[ -z "$ckey" && -s "$tmp/master.key" ]]; then
+    args+=(-key /restore/master.key)
+  fi
+  running && cmd_backup >/dev/null && ok "safety backup of the current data taken"
+  dc stop intrabin >/dev/null
+  chown -R 65532:65532 "$tmp"; chmod 700 "$tmp"
+  if dc run --rm --no-deps -T -v "$tmp:/restore:ro" intrabin restore -in /restore/intrabin.db "${args[@]}"; then
+    dc up -d >/dev/null
+    ok "restored; Intrabin is starting again (intrabin status)"
+  else
+    dc up -d >/dev/null
+    die "restore failed (see above); Intrabin was started again. If the data was already replaced, the previous database is kept in the data volume as intrabin.db.pre-restore-*"
+  fi
+}
+
 cmd_update() {
   local branch before after
   branch=$(git rev-parse --abbrev-ref HEAD)
@@ -296,6 +338,7 @@ Usage: intrabin [command]
   domain                set, change or remove the domain (HTTPS)
   runner [on|off]       enable or disable the Action Runner
   backup                back up the database and configuration
+  restore [file]        restore a backup (takes a safety backup first)
   update [--no-backup]  update to the latest version (backs up first)
   info                  installation details
   uninstall             remove Intrabin
@@ -324,9 +367,10 @@ menu() {
   ${C}10)${N} Action Runner on/off
   ${D}── Maintenance ──${N}
   ${C}11)${N} Backup
-  ${C}12)${N} Update
-  ${C}13)${N} Installation info
-  ${C}14)${N} Uninstall
+  ${C}12)${N} Restore a backup
+  ${C}13)${N} Update
+  ${C}14)${N} Installation info
+  ${C}15)${N} Uninstall
   ${C}0)${N}  Exit
 
 EOF
@@ -346,9 +390,10 @@ EOF
       9) (cmd_domain) || true; pause ;;
       10) (cmd_runner) || true; pause ;;
       11) (cmd_backup) || true; pause ;;
-      12) (cmd_update) || true; pause ;;
-      13) (cmd_info) || true; pause ;;
-      14) cmd_uninstall; pause ;;
+      12) (cmd_restore) || true; pause ;;
+      13) (cmd_update) || true; pause ;;
+      14) (cmd_info) || true; pause ;;
+      15) cmd_uninstall; pause ;;
       0|q|exit) exit 0 ;;
       *) ;;
     esac
@@ -368,6 +413,7 @@ case "${1:-}" in
   domain) cmd_domain ;;
   runner) cmd_runner "${2:-}" ;;
   backup) cmd_backup ;;
+  restore) cmd_restore "${2:-}" ;;
   update) cmd_update "${2:-}" ;;
   info) cmd_info ;;
   uninstall) cmd_uninstall ;;
