@@ -1,0 +1,15 @@
+/data/
+/bin/
+/dist/
+node_modules/
+apps/web/dist/
+internal/web/dist/*
+!internal/web/dist/.gitkeep
+*.db
+*.db-wal
+*.db-shm
+master.key
+.env
+/test-results/
+/playwright-report/
+coverage.out

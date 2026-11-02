@@ -1,0 +1,338 @@
+// Package model holds the domain types shared between storage, the monitoring
+// engine, the incident manager and the API.
+package model
+
+import "time"
+
+// Role is a user role. Roles are ordered: owner > admin > operator > viewer.
+type Role string
+
+const (
+	RoleOwner    Role = "owner"
+	RoleAdmin    Role = "admin"
+	RoleOperator Role = "operator"
+	RoleViewer   Role = "viewer"
+)
+
+// Rank returns a comparable rank for a role (higher = more privileged).
+func (r Role) Rank() int {
+	switch r {
+	case RoleOwner:
+		return 4
+	case RoleAdmin:
+		return 3
+	case RoleOperator:
+		return 2
+	case RoleViewer:
+		return 1
+	}
+	return 0
+}
+
+// Valid reports whether r is a known role.
+func (r Role) Valid() bool { return r.Rank() > 0 }
+
+type User struct {
+	ID                string     `json:"id"`
+	Username          string     `json:"username"`
+	DisplayName       string     `json:"display_name"`
+	PasswordHash      string     `json:"-"`
+	Role              Role       `json:"role"`
+	Disabled          bool       `json:"disabled"`
+	Language          string     `json:"language"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	PasswordChangedAt time.Time  `json:"password_changed_at"`
+	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
+}
+
+type Session struct {
+	TokenHash  string
+	UserID     string
+	CSRFToken  string
+	CreatedAt  time.Time
+	LastSeenAt time.Time
+	ExpiresAt  time.Time
+	IP         string
+	UserAgent  string
+}
+
+// MonitorType enumerates supported check types.
+type MonitorType string
+
+const (
+	MonitorHTTP MonitorType = "http"
+	MonitorTCP  MonitorType = "tcp"
+	MonitorDNS  MonitorType = "dns"
+	MonitorTLS  MonitorType = "tls"
+)
+
+func (t MonitorType) Valid() bool {
+	switch t {
+	case MonitorHTTP, MonitorTCP, MonitorDNS, MonitorTLS:
+		return true
+	}
+	return false
+}
+
+// MonitorSettings holds type-specific, non-secret configuration.
+type MonitorSettings struct {
+	// HTTP
+	Method          string            `json:"method,omitempty"`
+	Headers         map[string]string `json:"headers,omitempty"`
+	Body            string            `json:"body,omitempty"`
+	ExpectedStatus  []string          `json:"expected_status,omitempty"` // e.g. "200", "2xx", "200-299"
+	ExpectedBody    string            `json:"expected_body,omitempty"`   // substring that must be present
+	FollowRedirects *bool             `json:"follow_redirects,omitempty"`
+	MaxRedirects    int               `json:"max_redirects,omitempty"`
+	// TLS verification. Defaults to verifying (safe default).
+	SkipTLSVerify bool `json:"skip_tls_verify,omitempty"`
+	// Origin checks: connect to OriginAddress (ip or ip:port) instead of resolving
+	// the URL host, while keeping Host header and TLS SNI from the URL (or overrides).
+	OriginAddress string `json:"origin_address,omitempty"`
+	HostHeader    string `json:"host_header,omitempty"`
+	TLSServerName string `json:"tls_server_name,omitempty"`
+	// Mark DEGRADED if latency exceeds this (0 disables).
+	DegradedLatencyMs int `json:"degraded_latency_ms,omitempty"`
+	// TLS / HTTPS certificate expiry thresholds (days).
+	CertExpiryWarnDays int `json:"cert_expiry_warn_days,omitempty"`
+	CertExpiryFailDays int `json:"cert_expiry_fail_days,omitempty"`
+	// DNS
+	RecordType    string `json:"record_type,omitempty"`
+	ExpectedValue string `json:"expected_value,omitempty"`
+	Resolver      string `json:"resolver,omitempty"` // ip:port, optional
+	// Path label for diagnostics: public, origin, internal
+	CheckPath string `json:"check_path,omitempty"`
+}
+
+// MonitorSecrets are encrypted at rest and never returned by the API.
+type MonitorSecrets struct {
+	BasicAuthUser     string            `json:"basic_auth_user,omitempty"`
+	BasicAuthPassword string            `json:"basic_auth_password,omitempty"`
+	SecretHeaders     map[string]string `json:"secret_headers,omitempty"`
+}
+
+// FailMode selects how failed rounds escalate to DOWN.
+type FailMode string
+
+const (
+	FailConsecutive FailMode = "consecutive"
+	FailWindow      FailMode = "window"
+)
+
+// Policy defines multi-location verification semantics.
+type Policy struct {
+	// Number of failing probes (distinct nodes) required to mark a round failed.
+	ConfirmationsRequired int `json:"confirmations_required"`
+	// Minimum number of distinct monitoring locations among failing nodes.
+	MinLocations int `json:"min_locations"`
+	// Minimum valid (fresh) probes for a round to be conclusive.
+	MinValidProbes int      `json:"min_valid_probes"`
+	FailMode       FailMode `json:"fail_mode"`
+	// consecutive: failed rounds in a row; window: failed rounds within WindowSeconds.
+	FailureRounds int `json:"failure_rounds"`
+	WindowSeconds int `json:"window_seconds,omitempty"`
+	// Consecutive ok rounds required to recover.
+	RecoveryRounds int `json:"recovery_rounds"`
+	// Failure within this many seconds after resolution reopens the incident.
+	CooldownSeconds int `json:"cooldown_seconds"`
+}
+
+// DefaultPolicy is safe for a standalone node.
+func DefaultPolicy() Policy {
+	return Policy{
+		ConfirmationsRequired: 1,
+		MinLocations:          1,
+		MinValidProbes:        1,
+		FailMode:              FailConsecutive,
+		FailureRounds:         3,
+		RecoveryRounds:        2,
+		CooldownSeconds:       300,
+	}
+}
+
+type Monitor struct {
+	ID              string          `json:"id"`
+	Name            string          `json:"name"`
+	Description     string          `json:"description"`
+	Type            MonitorType     `json:"type"`
+	Target          string          `json:"target"`
+	GroupID         string          `json:"group_id,omitempty"`
+	Tags            []string        `json:"tags"`
+	IntervalSeconds int             `json:"interval_seconds"`
+	TimeoutSeconds  int             `json:"timeout_seconds"`
+	Retries         int             `json:"retries"`
+	Enabled         bool            `json:"enabled"`
+	Settings        MonitorSettings `json:"settings"`
+	Secrets         *MonitorSecrets `json:"-"`           // decrypted, populated only for probe execution
+	SecretBlob      []byte          `json:"-"`           // encrypted MonitorSecrets as stored
+	SecretKeys      []string        `json:"secret_keys"` // names of configured secrets, values never exposed
+	Policy          Policy          `json:"policy"`
+	NodeSelector    []string        `json:"node_ids"`
+	Version         int             `json:"version"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+}
+
+type MonitorGroup struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// MonitorStatus is the evaluated availability state of a monitor.
+type MonitorStatus string
+
+const (
+	StatusUp            MonitorStatus = "UP"
+	StatusDegraded      MonitorStatus = "DEGRADED"
+	StatusSuspectedDown MonitorStatus = "SUSPECTED_DOWN"
+	StatusDown          MonitorStatus = "DOWN"
+	StatusUnknown       MonitorStatus = "UNKNOWN"
+	StatusPaused        MonitorStatus = "PAUSED"
+	StatusMaintenance   MonitorStatus = "MAINTENANCE"
+)
+
+type MonitorState struct {
+	MonitorID               string        `json:"monitor_id"`
+	Status                  MonitorStatus `json:"status"`
+	ConsecutiveFailed       int           `json:"consecutive_failed"`
+	ConsecutiveOK           int           `json:"consecutive_ok"`
+	ConsecutiveInconclusive int           `json:"consecutive_inconclusive"`
+	LastRound               int64         `json:"last_round"` // unix ms of last evaluated round start
+	LastVerdict             Verdict       `json:"last_verdict"`
+	LastLatencyMs           *float64      `json:"last_latency_ms,omitempty"`
+	StatusSince             time.Time     `json:"status_since"`
+	UpdatedAt               time.Time     `json:"updated_at"`
+}
+
+// ErrorCategory classifies failures precisely. A timeout is never an HTTP 5xx.
+type ErrorCategory string
+
+const (
+	ErrNone               ErrorCategory = ""
+	ErrHTTP5xx            ErrorCategory = "http_5xx"
+	ErrUnexpectedStatus   ErrorCategory = "unexpected_status"
+	ErrBodyMismatch       ErrorCategory = "body_mismatch"
+	ErrTimeout            ErrorCategory = "timeout"
+	ErrDNS                ErrorCategory = "dns_failure"
+	ErrConnectionRefused  ErrorCategory = "connection_refused"
+	ErrNetworkUnreachable ErrorCategory = "network_unreachable"
+	ErrConnectionReset    ErrorCategory = "connection_reset"
+	ErrTLS                ErrorCategory = "tls_error"
+	ErrCertExpiring       ErrorCategory = "cert_expiring"
+	ErrDNSMismatch        ErrorCategory = "dns_mismatch"
+	ErrInvalidConfig      ErrorCategory = "invalid_config"
+	ErrUnknown            ErrorCategory = "unknown"
+)
+
+type CheckResult struct {
+	ID            string        `json:"id"`
+	MonitorID     string        `json:"monitor_id"`
+	NodeID        string        `json:"node_id"`
+	ConfigVersion int           `json:"config_version"`
+	RoundStart    time.Time     `json:"round_start"`
+	ProbeAt       time.Time     `json:"probe_at"`
+	ReceivedAt    time.Time     `json:"received_at"`
+	Success       bool          `json:"success"`
+	Slow          bool          `json:"slow"`
+	LatencyMs     *float64      `json:"latency_ms,omitempty"`
+	HTTPStatus    *int          `json:"http_status,omitempty"`
+	ErrorCategory ErrorCategory `json:"error_category"`
+	ErrorMessage  string        `json:"error_message"`
+	Attempts      int           `json:"attempts"`
+	CertExpiresAt *time.Time    `json:"cert_expires_at,omitempty"`
+}
+
+// Verdict is the evaluated outcome of a monitoring round.
+type Verdict string
+
+const (
+	VerdictOK           Verdict = "ok"
+	VerdictPartial      Verdict = "partial"
+	VerdictFailed       Verdict = "failed"
+	VerdictInconclusive Verdict = "inconclusive"
+	VerdictMaintenance  Verdict = "maintenance"
+)
+
+type RoundResult struct {
+	MonitorID     string    `json:"monitor_id"`
+	RoundStart    time.Time `json:"round_start"`
+	Verdict       Verdict   `json:"verdict"`
+	ValidProbes   int       `json:"valid_probes"`
+	FailingProbes int       `json:"failing_probes"`
+	FailingNodes  []string  `json:"failing_nodes"`
+	AvgLatencyMs  *float64  `json:"avg_latency_ms,omitempty"`
+	Slow          bool      `json:"slow"`
+	EvaluatedAt   time.Time `json:"evaluated_at"`
+}
+
+// IncidentStatus values for the incident state machine.
+type IncidentStatus string
+
+const (
+	IncidentSuspected          IncidentStatus = "SUSPECTED"
+	IncidentConfirmed          IncidentStatus = "CONFIRMED"
+	IncidentAcknowledged       IncidentStatus = "ACKNOWLEDGED"
+	IncidentRecoveryPending    IncidentStatus = "RECOVERY_PENDING"
+	IncidentRecovering         IncidentStatus = "RECOVERING"
+	IncidentFailedOver         IncidentStatus = "FAILED_OVER"
+	IncidentResolved           IncidentStatus = "RESOLVED"
+	IncidentManualIntervention IncidentStatus = "MANUAL_INTERVENTION"
+	IncidentUnknown            IncidentStatus = "UNKNOWN"
+)
+
+type Incident struct {
+	ID                  string         `json:"id"`
+	MonitorID           string         `json:"monitor_id"`
+	MonitorName         string         `json:"monitor_name,omitempty"`
+	Status              IncidentStatus `json:"status"`
+	Title               string         `json:"title"`
+	StartedAt           time.Time      `json:"started_at"`
+	DetectedAt          time.Time      `json:"detected_at"`
+	ConfirmedAt         *time.Time     `json:"confirmed_at,omitempty"`
+	AcknowledgedAt      *time.Time     `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy      string         `json:"acknowledged_by,omitempty"`
+	ResolvedAt          *time.Time     `json:"resolved_at,omitempty"`
+	Resolution          string         `json:"resolution"`
+	ConfirmationSources []string       `json:"confirmation_sources"`
+	LastErrorCategory   string         `json:"last_error_category"`
+	UpdatedAt           time.Time      `json:"updated_at"`
+}
+
+type IncidentEvent struct {
+	ID         string         `json:"id"`
+	IncidentID string         `json:"incident_id"`
+	At         time.Time      `json:"at"`
+	Type       string         `json:"type"`
+	FromStatus IncidentStatus `json:"from_status,omitempty"`
+	ToStatus   IncidentStatus `json:"to_status,omitempty"`
+	Actor      string         `json:"actor"`
+	Message    string         `json:"message"`
+	Details    map[string]any `json:"details,omitempty"`
+}
+
+type MaintenanceWindow struct {
+	ID        string    `json:"id"`
+	MonitorID string    `json:"monitor_id,omitempty"` // empty = all monitors
+	Title     string    `json:"title"`
+	StartsAt  time.Time `json:"starts_at"`
+	EndsAt    time.Time `json:"ends_at"`
+	CreatedBy string    `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type AuditEntry struct {
+	ID         string         `json:"id"`
+	At         time.Time      `json:"at"`
+	ActorID    string         `json:"actor_id"`
+	ActorName  string         `json:"actor_name"`
+	Action     string         `json:"action"`
+	TargetType string         `json:"target_type"`
+	TargetID   string         `json:"target_id"`
+	IP         string         `json:"ip"`
+	Outcome    string         `json:"outcome"`
+	Details    map[string]any `json:"details,omitempty"`
+}
