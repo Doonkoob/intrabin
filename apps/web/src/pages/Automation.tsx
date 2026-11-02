@@ -113,7 +113,7 @@ export function AutomationPage() {
   )
 }
 
-function RunsTable({ runs, showWorkflow }: { runs: WorkflowRun[]; showWorkflow?: boolean }) {
+export function RunsTable({ runs, showWorkflow }: { runs: WorkflowRun[]; showWorkflow?: boolean }) {
   const { t, loc } = usePrefs()
   if (!runs.length) return <Empty>{t('wf.noRuns')}</Empty>
   return (
@@ -238,7 +238,7 @@ export function RunDetailPage() {
   }
   return (
     <>
-      <Link to={`/automation/${r.workflow_id}`} className="mb-3 inline-flex items-center gap-1 text-sm text-muted hover:text-fg"><ArrowLeft className="size-4 rtl:-scale-x-100" />{r.workflow_name ?? t('wf.workflow')}</Link>
+      <Link to={r.context?.dr_plan_id ? `/dr/${r.context.dr_plan_id}` : `/automation/${r.workflow_id}`} className="mb-3 inline-flex items-center gap-1 text-sm text-muted hover:text-fg"><ArrowLeft className="size-4 rtl:-scale-x-100" />{r.workflow_name ?? t('wf.workflow')}</Link>
       <PageHeader title={<span className="flex flex-wrap items-center gap-2">{t('wf.run')} <Ltr>{r.id.slice(0, 8)}</Ltr><RunBadge status={r.status} /></span>}
         subtitle={`${t(`wf.triggerType.${r.trigger_type}` as Key)} · ${fmtDateTime(loc, r.created_at)}`}
         actions={active && (can('automation.manage') || can('automation.run')) && <Button variant="danger" onClick={() => setCancelOpen(true)}>{t('wf.cancelRun')}</Button>} />

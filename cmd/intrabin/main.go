@@ -26,6 +26,7 @@ import (
 	"github.com/intrabin/intrabin/internal/config"
 	"github.com/intrabin/intrabin/internal/controlplane"
 	"github.com/intrabin/intrabin/internal/dns"
+	"github.com/intrabin/intrabin/internal/dr"
 	"github.com/intrabin/intrabin/internal/incidents"
 	"github.com/intrabin/intrabin/internal/monitoring"
 	"github.com/intrabin/intrabin/internal/node"
@@ -132,15 +133,20 @@ func serve() error {
 	}
 	auto := &automation.Engine{Store: store, CP: cp, Incidents: incMgr, Fence: clusterMgr.Fence, Active: n.CanManage, Box: box, Runner: runnerClient, DNS: dnsSvc, Log: log.With("component", "automation")}
 	incMgr.OnTransition(auto.OnIncidentTransition)
+	drMgr := &dr.Manager{Store: store, CP: cp, Engine: auto, DNS: dnsSvc, Fence: clusterMgr.Fence, Active: n.CanManage, Log: log.With("component", "dr")}
+	incMgr.OnTransition(drMgr.OnIncidentTransition)
 	cp.X.OnApplied(func(op string) {
 		if op == "state.restore" || (strings.HasPrefix(op, "monitor.") && op != "monitor.round" && op != "monitor.state") {
 			engine.Reload()
 		}
-		if op == "state.restore" || strings.HasPrefix(op, "workflow.") || op == "run.create" {
+		if op == "state.restore" || strings.HasPrefix(op, "workflow.") || op == "run.create" || op == "drplan.transition" {
 			auto.Kick()
 		}
+		if op == "state.restore" || strings.HasPrefix(op, "drplan.") || op == "run.progress" {
+			drMgr.Kick()
+		}
 	})
-	clusterMgr.OnRoleChange(func(node.Role) { auto.Kick() })
+	clusterMgr.OnRoleChange(func(node.Role) { auto.Kick(); drMgr.Kick() })
 	if err := clusterMgr.Resume(ctx); err != nil {
 		return fmt.Errorf("resume cluster: %w", err)
 	}
@@ -157,10 +163,11 @@ func serve() error {
 		log.Warn("initial setup required: open the web UI and enter this one-time setup token", "setup_token", setupToken)
 	}
 	srv := api.New(api.Deps{Config: cfg, Store: store, CP: cp, Cluster: clusterMgr, Node: n, Engine: engine, Prober: prober, Incidents: incMgr, Audit: auditLog,
-		SecretBox: box, Log: log, Web: web.Handler(), SetupToken: setupToken, Automation: auto, DNS: dnsSvc})
+		SecretBox: box, Log: log, Web: web.Handler(), SetupToken: setupToken, Automation: auto, DNS: dnsSvc, DR: drMgr})
 
 	go engine.Run(ctx)
 	go auto.Run(ctx)
+	go drMgr.Run(ctx)
 	go housekeeping(ctx, cp, n, log)
 	go dnsReconciler(ctx, dnsSvc, n)
 	go autoCluster(ctx, cfg, clusterMgr, log)

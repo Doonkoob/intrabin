@@ -22,6 +22,7 @@ import (
 	"github.com/intrabin/intrabin/internal/config"
 	"github.com/intrabin/intrabin/internal/controlplane"
 	"github.com/intrabin/intrabin/internal/dns"
+	"github.com/intrabin/intrabin/internal/dr"
 	"github.com/intrabin/intrabin/internal/incidents"
 	"github.com/intrabin/intrabin/internal/metrics"
 	"github.com/intrabin/intrabin/internal/model"
@@ -44,6 +45,7 @@ type Server struct {
 	incidents  *incidents.Manager
 	automation *automation.Engine
 	dns        *dns.Service
+	dr         *dr.Manager
 	audit      *audit.Logger
 	box        *security.SecretBox
 	limiter    *auth.LoginLimiter
@@ -67,6 +69,7 @@ type Deps struct {
 	Incidents  *incidents.Manager
 	Automation *automation.Engine
 	DNS        *dns.Service
+	DR         *dr.Manager
 	Audit      *audit.Logger
 	SecretBox  *security.SecretBox
 	Log        *slog.Logger
@@ -76,7 +79,7 @@ type Deps struct {
 }
 
 func New(d Deps) *Server {
-	s := &Server{cfg: d.Config, store: d.Store, cp: d.CP, cluster: d.Cluster, node: d.Node, engine: d.Engine, prober: d.Prober, incidents: d.Incidents, automation: d.Automation, dns: d.DNS,
+	s := &Server{cfg: d.Config, store: d.Store, cp: d.CP, cluster: d.Cluster, node: d.Node, engine: d.Engine, prober: d.Prober, incidents: d.Incidents, automation: d.Automation, dns: d.DNS, dr: d.DR,
 		audit: d.Audit, box: d.SecretBox, limiter: auth.NewLoginLimiter(), log: d.Log, web: d.Web, setupToken: d.SetupToken, argon: security.DefaultArgon2}
 	if s.cp == nil {
 		s.cp = controlplane.New(d.Store)
@@ -223,6 +226,15 @@ func (s *Server) Handler() http.Handler {
 		{"GET /api/v1/dns/snapshots", auth.PermView, false, s.handleListDNSSnapshots},
 		{"GET /api/v1/dns/snapshots/{id}", auth.PermView, false, s.handleGetDNSSnapshot},
 		{"POST /api/v1/dns/snapshots/{id}/restore", auth.PermDNSManage, true, s.handleRestoreDNSSnapshot},
+		{"GET /api/v1/dr-plans", auth.PermView, false, s.handleListDRPlans},
+		{"POST /api/v1/dr-plans", auth.PermDRManage, true, s.handleCreateDRPlan},
+		{"GET /api/v1/dr-plans/{id}", auth.PermView, false, s.handleGetDRPlan},
+		{"PUT /api/v1/dr-plans/{id}", auth.PermDRManage, true, s.handleUpdateDRPlan},
+		{"DELETE /api/v1/dr-plans/{id}", auth.PermDRManage, true, s.handleDeleteDRPlan},
+		{"POST /api/v1/dr-plans/{id}/preview", auth.PermDRManage, false, s.handlePreviewDRPlan},
+		{"POST /api/v1/dr-plans/{id}/failover", auth.PermDRManage, true, s.handleDRSwitch(dr.Failover)},
+		{"POST /api/v1/dr-plans/{id}/failback", auth.PermDRManage, true, s.handleDRSwitch(dr.Failback)},
+		{"POST /api/v1/dr-plans/{id}/resolve", auth.PermDRManage, true, s.handleResolveDRPlan},
 
 		{"GET /api/v1/audit-logs", auth.PermAuditView, true, s.handleListAudit},
 		{"GET /api/v1/settings", auth.PermView, true, s.handleGetSettings},

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/intrabin/intrabin/internal/dns"
+	"github.com/intrabin/intrabin/internal/dr"
 	"github.com/intrabin/intrabin/internal/model"
 	"github.com/intrabin/intrabin/internal/storage"
 )
@@ -185,6 +186,12 @@ func (s *Server) handleDeleteDNSProvider(w http.ResponseWriter, r *http.Request)
 				s.writeErr(w, r, &APIError{Status: 409, Code: "dns_provider_in_use", Message: "Workflow \"" + wf.Name + "\" uses this DNS integration. Remove the step first."})
 				return
 			}
+		}
+	}
+	if plans, err := s.store.ListDRPlans(r.Context()); err == nil {
+		if dp := dr.UsesProvider(plans, id); dp != nil {
+			s.writeErr(w, r, &APIError{Status: 409, Code: "dns_provider_in_use", Message: "DR plan \"" + dp.Name + "\" uses this DNS integration."})
+			return
 		}
 	}
 	if err := s.cp.DeleteDNSProvider(r.Context(), id); err != nil {

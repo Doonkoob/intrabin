@@ -49,6 +49,7 @@ var replicatedTables = []tableSpec{
 	{name: "enrollment_tokens"},
 	{name: "cluster_nodes"},
 	{name: "workflows"},
+	{name: "dr_plans"},
 	{name: "workflow_runs"},
 	{name: "workflow_actions"},
 	{name: "dns_providers"},

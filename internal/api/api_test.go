@@ -21,6 +21,7 @@ import (
 	"github.com/intrabin/intrabin/internal/controlplane"
 	"github.com/intrabin/intrabin/internal/dns"
 	"github.com/intrabin/intrabin/internal/dns/dnsmock"
+	"github.com/intrabin/intrabin/internal/dr"
 	"github.com/intrabin/intrabin/internal/incidents"
 	"github.com/intrabin/intrabin/internal/model"
 	"github.com/intrabin/intrabin/internal/monitoring"
@@ -67,7 +68,9 @@ func newEnv(t *testing.T) *env {
 		APIBase: map[string]string{"cloudflare": mockSrv.URL + "/cloudflare/client/v4", "arvancloud": mockSrv.URL + "/arvan/cdn/4.0"}}
 	auto := &automation.Engine{Store: st, CP: cp, Incidents: inc, Fence: cm.Fence, Active: n.CanManage, Box: box, DNS: dnsSvc, Log: log, Interval: 100 * time.Millisecond}
 	go auto.Run(t.Context())
-	s := New(Deps{Config: cfg, Store: st, CP: cp, Cluster: cm, Node: n, Engine: eng, Prober: prober, Incidents: inc, Audit: audit.New(cp, log), SecretBox: box, Log: log, SetupToken: setupTok, Argon2: &fast, Automation: auto, DNS: dnsSvc})
+	drMgr := &dr.Manager{Store: st, CP: cp, Engine: auto, DNS: dnsSvc, Fence: cm.Fence, Active: n.CanManage, Log: log, Interval: 100 * time.Millisecond}
+	go drMgr.Run(t.Context())
+	s := New(Deps{Config: cfg, Store: st, CP: cp, Cluster: cm, Node: n, Engine: eng, Prober: prober, Incidents: inc, Audit: audit.New(cp, log), SecretBox: box, Log: log, SetupToken: setupTok, Argon2: &fast, Automation: auto, DNS: dnsSvc, DR: drMgr})
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 	return &env{t: t, srv: srv, store: st, node: n, dns: mock}

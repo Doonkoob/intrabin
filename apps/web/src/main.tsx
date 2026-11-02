@@ -17,6 +17,7 @@ import { ClusterPage, FollowerStatusPage } from './pages/Cluster'
 import { AuditPage } from './pages/Audit'
 import { AutomationPage, RunDetailPage, WorkflowDetailPage, WorkflowFormPage } from './pages/Automation'
 import { DNSPage, DNSProviderPage } from './pages/DNS'
+import { DRDetailPage, DRFormPage, DRPage } from './pages/DR'
 import { UsersPage } from './pages/Users'
 import { SettingsPage } from './pages/Settings'
 
@@ -71,6 +72,10 @@ function Root() {
         <Route path="automation/:id/edit" element={<WorkflowFormPage />} />
         <Route path="dns" element={<DNSPage />} />
         <Route path="dns/:id" element={<DNSProviderPage />} />
+        <Route path="dr" element={<DRPage />} />
+        <Route path="dr/new" element={<DRFormPage />} />
+        <Route path="dr/:id" element={<DRDetailPage />} />
+        <Route path="dr/:id/edit" element={<DRFormPage />} />
         <Route path="cluster" element={<ClusterPage />} />
         <Route path="audit" element={<AuditPage />} />
         <Route path="users" element={<UsersPage />} />

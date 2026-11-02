@@ -416,6 +416,7 @@ type WorkflowStep struct {
 // Workflow is an automation definition.
 type Workflow struct {
 	ID          string          `json:"id"`
+	Kind        string          `json:"kind,omitempty"` // "workflow" or "dr" (the backing row of a DR plan)
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Enabled     bool            `json:"enabled"`
@@ -560,4 +561,58 @@ type DNSChange struct {
 	Error       string     `json:"error"`
 	CreatedAt   time.Time  `json:"created_at"`
 	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+}
+
+// ---- disaster recovery (Phase 5) ----
+
+// DR plan states.
+const (
+	DRPrimary     = "primary"      // traffic goes to the primary
+	DRFailingOver = "failing_over" // a failover run is in progress
+	DRFailedOver  = "failed_over"  // traffic goes to the secondary
+	DRFailingBack = "failing_back" // a failback run is in progress
+	DRAttention   = "attention"    // a run failed or its outcome is unknown; an operator must decide
+)
+
+// DRConfig defines how a service fails over between a primary and a secondary.
+type DRConfig struct {
+	// MonitorIDs watch the primary. A confirmed incident on any of them can trigger an automatic
+	// failover (when Automatic is set); all must be UP before a failback.
+	MonitorIDs []string `json:"monitor_ids"`
+	// SecondaryMonitorID, when set, must be UP before failing over.
+	SecondaryMonitorID string `json:"secondary_monitor_id,omitempty"`
+	// Automatic enables failover without a human (opt-in; off by default). Failback is always manual.
+	Automatic       bool `json:"automatic"`
+	CooldownSeconds int  `json:"cooldown_seconds"`
+	// The DNS record that is switched.
+	ProviderID     string `json:"provider_id"`
+	ZoneName       string `json:"zone_name"`
+	RecordType     string `json:"record_type"`
+	RecordName     string `json:"record_name"`
+	PrimaryValue   string `json:"primary_value"`
+	SecondaryValue string `json:"secondary_value"`
+	TTL            int    `json:"ttl"`
+	Proxied        bool   `json:"proxied"`
+	// Optional steps around the DNS switch during failover (script, http, wait).
+	PreSteps  []WorkflowStep `json:"pre_steps"`
+	PostSteps []WorkflowStep `json:"post_steps"`
+}
+
+// DRPlan is a disaster-recovery plan and its current state.
+type DRPlan struct {
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	Description      string     `json:"description"`
+	Config           DRConfig   `json:"config"`
+	SecretKeys       []string   `json:"secret_keys"`
+	State            string     `json:"state"`
+	ActiveRunID      string     `json:"active_run_id"`
+	Direction        string     `json:"direction"`
+	StateNote        string     `json:"state_note"`
+	LastFailoverAt   *time.Time `json:"last_failover_at,omitempty"`
+	LastTransitionAt time.Time  `json:"last_transition_at"`
+	Version          int        `json:"version"`
+	CreatedBy        string     `json:"created_by"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }

@@ -242,3 +242,25 @@ func (c *CP) PruneDNSSnapshots(ctx context.Context, before time.Time, keep int) 
 	_, err := c.apply(ctx, "dnssnapshots.prune", dnsPrunePayload{Before: before, Keep: keep})
 	return err
 }
+
+type drPlanWire struct {
+	Workflow   model.Workflow `json:"workflow"`
+	SecretBlob []byte         `json:"secret_blob"`
+	Plan       model.DRPlan   `json:"plan"`
+}
+
+// SaveDRPlan creates or updates a DR plan with its backing workflow row (secrets live there).
+func (c *CP) SaveDRPlan(ctx context.Context, w *model.Workflow, p *model.DRPlan, create bool) error {
+	op := "drplan.update"
+	if create {
+		op = "drplan.create"
+	}
+	_, err := c.apply(ctx, op, drPlanWire{Workflow: *w, SecretBlob: w.SecretBlob, Plan: *p})
+	return err
+}
+
+// TransitionDRPlan is an atomic compare-and-set of a plan's state (and optionally starts a run).
+func (c *CP) TransitionDRPlan(ctx context.Context, t storage.DRTransition) error {
+	_, err := c.apply(ctx, "drplan.transition", t)
+	return err
+}

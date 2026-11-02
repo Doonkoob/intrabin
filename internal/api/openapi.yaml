@@ -455,3 +455,25 @@ paths:
   /dns/snapshots/{id}/restore:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     post: { summary: "Restore editable records. Body: { dry_run, include_deletes, plans }. Apply with the plans from the dry run; stops at the first change that did not definitely apply.", responses: { '200': { description: "{ changes, planned, error? }" }, '409': { $ref: '#/components/responses/Error' } } }
+  /dr-plans:
+    get: { summary: "DR plans with their state (primary, failing_over, failed_over, failing_back, attention) and why an automatic failover is waiting", responses: { '200': { description: "{ plans }" } } }
+    post:
+      summary: "Create a DR plan. Body: { name, description, config: { monitor_ids, secondary_monitor_id, automatic, cooldown_seconds, provider_id, zone_name, record_type A|AAAA|CNAME, record_name, primary_value, secondary_value, ttl, proxied, pre_steps, post_steps } }. Requires dr.manage"
+      responses: { '201': { description: "{ plan }" }, '422': { $ref: '#/components/responses/Error' } }
+  /dr-plans/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get: { summary: "Plan and its switch runs", responses: { '200': { description: "{ plan, runs }" } } }
+    put: { summary: "Update a plan (not while a switch is running)", responses: { '200': { description: "{ plan }" }, '409': { $ref: '#/components/responses/Error' } } }
+    delete: { summary: "Delete a plan (not while a switch is running). DNS is not changed", responses: { '204': { description: Deleted } } }
+  /dr-plans/{id}/preview:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post: { summary: "Dry run. Body: { direction: failover|failback }. Returns the safety checks, the DNS plan and the steps; never writes", responses: { '200': { description: "{ result: { checks, steps, dns } }" } } }
+  /dr-plans/{id}/failover:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post: { summary: "Start a failover on the active controller. Body: { note, force }. force overrides overridable checks and requires a note. The state change and the run are created in one replicated transition", responses: { '200': { description: "{ result: { checks, run } }" }, '409': { $ref: '#/components/responses/Error' } } }
+  /dr-plans/{id}/failback:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post: { summary: "Start a failback (always manual). Body: { note, force }", responses: { '200': { description: "{ result: { checks, run } }" }, '409': { $ref: '#/components/responses/Error' } } }
+  /dr-plans/{id}/resolve:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post: { summary: "Leave the attention state after a person verified where traffic goes. Body: { state: primary|failed_over, note (required) }. Nothing is changed at the provider", responses: { '200': { description: "{ plan }" } } }

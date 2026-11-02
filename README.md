@@ -5,8 +5,8 @@ One Go binary with an embedded React UI, embedded SQLite storage, Persian/Englis
 light/dark themes. Every installation runs the same software; nodes can form a Raft cluster for
 multi-location monitoring with automatic leader failover.
 
-> Status: **Phases 1 (standalone), 2 (clustering), 3 (automation) and 4 (DNS) are functional.**
-> Disaster-recovery workflows are not implemented yet — see
+> Status: **Phases 1 (standalone), 2 (clustering), 3 (automation), 4 (DNS) and 5 (disaster
+> recovery) are functional.** Hardening for a first release is in progress — see
 > [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 
 ## Features available now
@@ -32,6 +32,11 @@ multi-location monitoring with automatic leader failover.
   record change, snapshot before writing, conflict check, read-back verification, revert and snapshot
   restore; a DNS step for workflows. A change is written at most once; uncertain outcomes are settled
   by reading the zone back. See [docs/operations/dns.md](docs/operations/dns.md).
+* **Disaster recovery**: DR plans that switch a DNS record between a primary and a secondary site,
+  with safety checks shown before every switch (active controller, secondary health, cooldown, DNS dry
+  run), overrides only by a person with a reason, opt-in automatic failover on a confirmed incident and
+  always-manual failback. One replicated transition per switch prevents split-brain double switches.
+  See [docs/operations/dr.md](docs/operations/dr.md).
 * Prometheus metrics, structured JSON logs, health/readiness endpoints, OpenAPI spec at `/api/v1/openapi.yaml`.
 
 ## Install on Ubuntu (one command)

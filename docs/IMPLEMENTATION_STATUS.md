@@ -10,8 +10,17 @@ _Last updated: 2026-11-02. Keep this file accurate: a feature is "done" only whe
 | 2 — Distributed nodes / Raft | **Done** (see below; verified by in-process 3-node tests, a 3-process e2e test and a 3-node Docker Compose failover test) |
 | 3 — Automation / workflows / runner | **Done** (see below; verified by Go unit/integration tests, an in-process failover test, Playwright and the local + Compose 3-node e2e with a leader killed mid-script) |
 | 4 — Cloudflare / ArvanCloud DNS | **Done** (see below; verified by Go tests against a fake of both provider APIs with fault injection, and Playwright. Not run against real provider accounts, by design) |
-| 5 — Disaster-recovery workflows | Not started (incident states RECOVERY_PENDING…FAILED_OVER exist in the state machine) |
-| 6 — Hardening & release | Partial (CI workflow, docs, license) |
+| 5 — Disaster-recovery workflows | **Done** (see below; verified by Go tests with a fake DNS provider, including automatic gating and failed switches, and Playwright. No approval step type or drill mode yet) |
+| 6 — Hardening & release | Partial (CI workflow, docs, MIT license, one-command Ubuntu installer + management CLI) |
+
+## Completed components (Phase 5: disaster recovery)
+* **Data model** (migration 0005) — `workflows.kind` (`workflow` | `dr`; DR workflows are hidden from the workflow list/API) and `dr_plans` (config, state, active run, direction, note, last failover/transition), replicated through `drplan.create/update/transition` commands.
+* **State machine** (`internal/dr`) — primary → failing_over → failed_over → failing_back → primary; failed/cancelled/unknown runs → attention; operator resolve with a note. Starting a switch is one Raft-committed compare-and-set that also inserts its run (`state_changed` on a lost race).
+* **Safety checks** — active controller (leader + quorum + mesh gate), state, primary health, secondary monitor UP, cooldown (default 30 min), DNS dry run; overridable checks need a person and a note; controller and DNS checks are never overridable. Checks are shown before every switch.
+* **Automatic failover** — opt-in per plan, requires a secondary monitor; only on the active controller, only for a confirmed/acknowledged incident, never in the cooldown or with the secondary not UP, at most once per incident; never overrides a check. The reason an automatic plan is waiting is shown. Failback is always manual.
+* **Runs** — DNS step (fenced, single write, read-back, reconciliation by zone read), optional pre/post steps (API), incident status updates (recovering → failed over; resolved on failback).
+* **API** — `/api/v1/dr-plans` CRUD, preview, failover, failback, resolve; `dr.manage` permission; DNS integrations used by a plan cannot be deleted; OpenAPI (70 paths); all audited.
+* **UI** — DR list, plan page (traffic, policy, switch history, in-progress and waiting banners), switch dialog with live checks, steps and override, resolve dialog, plan editor. EN + FA.
 
 ## Completed components (Phase 4: DNS)
 * **Providers** (`internal/dns`) — Cloudflare API v4 and ArvanCloud CDN API 4.0 clients (verify, zones and records with pagination, create/update/delete); A/AAAA/CNAME/TXT editable, other types read-only; ArvanCloud extra fields preserved on update; GETs retried on 429/5xx/transport errors, writes never retried; errors classified (auth, not found, rate limited, invalid, provider, transport) and sanitised.
@@ -54,6 +63,11 @@ _Last updated: 2026-11-02. Keep this file accurate: a feature is "done" only whe
 * **UI** — React 19 + TS + Tailwind 4 SPA embedded in the binary: setup, login, overview dashboard, monitors list/filter, monitor create/edit with live test and policy summary, monitor details (uptime periods with coverage, 90-day bars, latency chart, rounds strip, status codes, error categories, per-node, recent checks, incidents, certificate), groups, incidents + timeline, maintenance, cluster/node page, audit log, users & roles, settings (profile, password, appearance, instance, retention). Persian RTL with Vazirmatn and Jalali dates via `Intl`, English LTR, light/dark/system themes, keyboard focus styles, responsive layout. Restricted follower view (activates when the node is not the controller).
 * **Deployment** — multi-stage Dockerfile (distroless, non-root, 7.4 MB content), Compose with read-only FS, dropped caps, localhost bind, healthcheck, log rotation; `.env.example`; Makefile.
 
+## Test results (2026-11-02, Phase 5)
+* `go test -race ./...`: all packages pass. New: `internal/dr` (manual failover/failback, automatic failover opt-in + gating + once per incident + four concurrent evaluations start exactly one switch + never failback, failed switch → attention → resolve), `internal/api` DR API test (validation incl. automatic without a secondary monitor, hidden from workflows, preview, switch).
+* Playwright: **15 passed** (new: DR plan created in the UI, failover blocked by an unhealthy secondary then overridden with a reason, failback, run history, Persian layout).
+* Installer: `scripts/install.sh` run on Ubuntu 24.04 (Docker 29, Compose 5): fresh install, login with the printed random credentials, `intrabin` password/rename/users/backup/domain (Caddy started, ACME attempted)/runner on+off/uninstall keeping data/reinstall. Not verified here: a real Let's Encrypt certificate (no public domain) and the image build during install (Docker Hub rate limit in this environment; the image was built separately).
+
 ## Test results (2026-11-02, Phase 4)
 * `go vet ./...` clean; `go test -race ./...`: **78 tests passed, 0 failed**. New in Phase 4:
   * `dns` — both providers against the fake: pagination (122 records), MX read-only, create/update/delete, ArvanCloud settings preserved, auth/404/429/5xx classification, name/value validation; service: plan/apply/verify, stale plan → conflict, no-change, revert of update and create, 400 → failed, 502 after apply → reconciled_applied, 503 without apply → reconciled_not_applied with no retry, timeout after apply → reconciled_applied, no write without a fence, idempotent change ID, leader reconciliation of `dispatching` changes, snapshot restore with and without deletions converges.
@@ -74,6 +88,7 @@ _Last updated: 2026-11-02. Keep this file accurate: a feature is "done" only whe
 * Phase 1–2 results remain valid. `govulncheck` could not run here (network policy); CI runs it.
 
 ## Known defects / limitations
+* DR: one DNS record per plan; no approval step or drill mode; check details and run step names are English; pre/post steps are editable through the API only; the switch history does not label the direction of each run.
 * Cluster: no automated recovery after permanent loss of a majority of voters; no CRL or automatic node-certificate renewal (1-year certificates); `reset-password` refuses to run on cluster members.
 * Cluster: elections are stock Raft with pre-vote; the mesh gate guards actions and writes, not campaigning (hashicorp/raft offers no veto hook).
 * Cluster: snapshots carry 48 h of round verdicts and 35 days of hourly rollups; a node restored from a snapshot can lack older history.
@@ -86,8 +101,8 @@ _Last updated: 2026-11-02. Keep this file accurate: a feature is "done" only whe
 * DNS: not exercised against real Cloudflare or ArvanCloud accounts (mocks only, as required); no compare-and-set at the providers, so the conflict check narrows but does not close the race with other editors; only A/AAAA/CNAME/TXT are editable; snapshot reasons and provider error texts are English only; zone selection in the workflow editor is a text field.
 * Automation: an incident-triggered run is created right after the incident transition commits; a crash between the two commits loses that trigger. No approval step type yet. Script output and server-side error texts are English only. Scripts have the runner container's network access (restrict egress at the network level). The runner's HTTP API is plain HTTP unless TLS is configured on it.
 
-## Next implementation steps (Phase 5: disaster-recovery workflows)
-1. DR plans built on workflows: primary/secondary targets, health-gated failover (DNS step + incident FAILED_OVER), and a guided failback with its own plan and approval.
-2. Approval step type (pause until an operator approves; durable, fenced).
-3. Split-brain protection for DR: failover only from the active controller with the mesh gate open and a quorum-confirmed incident; opt-in automatic failover per plan, manual by default.
-4. DR drill mode against the mock provider and a status view per plan.
+## Next implementation steps (Phase 6: hardening and release)
+1. Approval step type (durable pause until an operator approves) and DR drill mode against a test record.
+2. Master-key rotation command; restore command; signed release images and a published image so the installer can pull instead of build.
+3. Security review pass (rate limits, headers, dependency scan with govulncheck in CI), load test of large monitor counts.
+4. Translate server-side check details and error texts (currently English).

@@ -425,3 +425,48 @@ export interface DNSSnapshot {
   created_by: string
   created_at: string
 }
+
+// ---- disaster recovery (Phase 5) ----
+
+export type DRState = 'primary' | 'failing_over' | 'failed_over' | 'failing_back' | 'attention'
+
+export interface DRConfig {
+  monitor_ids: string[]
+  secondary_monitor_id?: string
+  automatic: boolean
+  cooldown_seconds: number
+  provider_id: string
+  zone_name: string
+  record_type: string
+  record_name: string
+  primary_value: string
+  secondary_value: string
+  ttl: number
+  proxied: boolean
+  pre_steps: WorkflowStep[]
+  post_steps: WorkflowStep[]
+}
+
+export interface DRPlan {
+  id: string
+  name: string
+  description: string
+  config: DRConfig
+  secret_keys: string[]
+  state: DRState
+  active_run_id: string
+  direction: '' | 'failover' | 'failback'
+  state_note: string
+  last_failover_at?: string
+  last_transition_at: string
+  version: number
+  created_by: string
+  created_at: string
+  updated_at: string
+  waiting?: string
+  run_status?: RunStatus
+}
+
+export interface DRCheck { id: string; ok: boolean; blocking: boolean; overridable: boolean; detail: string }
+
+export interface DRResult { plan: DRPlan; checks: DRCheck[]; dns_plan?: DNSPlan; steps: string[]; run?: WorkflowRun }

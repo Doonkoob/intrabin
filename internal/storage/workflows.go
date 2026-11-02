@@ -10,14 +10,21 @@ import (
 	"github.com/intrabin/intrabin/internal/model"
 )
 
-const workflowCols = `id,name,description,enabled,trigger,steps,secret_env,secret_keys,operator_can_run,version,next_fire_at,created_by,created_at,updated_at`
+const workflowCols = `id,name,description,enabled,trigger,steps,secret_env,secret_keys,operator_can_run,version,next_fire_at,created_by,created_at,updated_at,kind`
 
 func (s *Store) CreateWorkflow(ctx context.Context, w *model.Workflow) error {
 	tr, _ := json.Marshal(w.Trigger)
 	st, _ := json.Marshal(nonNilSteps(w.Steps))
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO workflows(`+workflowCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		w.ID, w.Name, w.Description, boolInt(w.Enabled), string(tr), string(st), nullBlob(w.SecretBlob), secretKeysJSON(w.SecretKeys), boolInt(w.OperatorCanRun), w.Version, nullMs(w.NextFireAt), w.CreatedBy, ms(w.CreatedAt), ms(w.UpdatedAt))
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO workflows(`+workflowCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		w.ID, w.Name, w.Description, boolInt(w.Enabled), string(tr), string(st), nullBlob(w.SecretBlob), secretKeysJSON(w.SecretKeys), boolInt(w.OperatorCanRun), w.Version, nullMs(w.NextFireAt), w.CreatedBy, ms(w.CreatedAt), ms(w.UpdatedAt), workflowKind(w.Kind))
 	return mapConflict(err)
+}
+
+func workflowKind(k string) string {
+	if k == "" {
+		return "workflow"
+	}
+	return k
 }
 
 func (s *Store) UpdateWorkflow(ctx context.Context, w *model.Workflow) error {
@@ -52,7 +59,7 @@ func scanWorkflow(sc interface{ Scan(...any) error }) (*model.Workflow, error) {
 	var blob []byte
 	var next sql.NullInt64
 	var c, u int64
-	if err := sc.Scan(&w.ID, &w.Name, &w.Description, &enabled, &tr, &st, &blob, &keys, &opRun, &w.Version, &next, &w.CreatedBy, &c, &u); err != nil {
+	if err := sc.Scan(&w.ID, &w.Name, &w.Description, &enabled, &tr, &st, &blob, &keys, &opRun, &w.Version, &next, &w.CreatedBy, &c, &u, &w.Kind); err != nil {
 		return nil, err
 	}
 	w.Enabled, w.OperatorCanRun = enabled == 1, opRun == 1
@@ -84,8 +91,9 @@ func (s *Store) GetWorkflow(ctx context.Context, id string) (*model.Workflow, er
 	return w, err
 }
 
+// ListWorkflows lists user-defined workflows (not the backing rows of DR plans).
 func (s *Store) ListWorkflows(ctx context.Context) ([]*model.Workflow, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+workflowCols+` FROM workflows ORDER BY name COLLATE NOCASE`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+workflowCols+` FROM workflows WHERE kind='workflow' ORDER BY name COLLATE NOCASE`)
 	if err != nil {
 		return nil, err
 	}

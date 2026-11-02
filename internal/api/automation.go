@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -288,7 +289,7 @@ func (s *Server) handleListWorkflows(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetWorkflow(w http.ResponseWriter, r *http.Request) {
-	wf, err := s.store.GetWorkflow(r.Context(), r.PathValue("id"))
+	wf, err := s.userWorkflow(r.Context(), r.PathValue("id"))
 	if err != nil {
 		s.writeErr(w, r, err)
 		return
@@ -329,7 +330,7 @@ func (s *Server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
-	wf, err := s.store.GetWorkflow(r.Context(), r.PathValue("id"))
+	wf, err := s.userWorkflow(r.Context(), r.PathValue("id"))
 	if err != nil {
 		s.writeErr(w, r, err)
 		return
@@ -369,7 +370,7 @@ func (s *Server) handleUpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	id := r.PathValue("id")
-	wf, err := s.store.GetWorkflow(r.Context(), id)
+	wf, err := s.userWorkflow(r.Context(), id)
 	if err != nil {
 		s.writeErr(w, r, err)
 		return
@@ -393,7 +394,7 @@ func (s *Server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRunWorkflow(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
-	wf, err := s.store.GetWorkflow(r.Context(), r.PathValue("id"))
+	wf, err := s.userWorkflow(r.Context(), r.PathValue("id"))
 	if err != nil {
 		s.writeErr(w, r, err)
 		return
@@ -554,4 +555,13 @@ func (s *Server) handleAutomationStatus(w http.ResponseWriter, r *http.Request) 
 		"node_id":       s.node.Identity.ID,
 		"checked_at":    strconv.FormatInt(time.Now().Unix(), 10),
 	})
+}
+
+// userWorkflow loads a user-defined workflow; the backing rows of DR plans are not workflows here.
+func (s *Server) userWorkflow(ctx context.Context, id string) (*model.Workflow, error) {
+	wf, err := s.store.GetWorkflow(ctx, id)
+	if err == nil && wf.Kind == "dr" {
+		return nil, storage.ErrNotFound
+	}
+	return wf, err
 }

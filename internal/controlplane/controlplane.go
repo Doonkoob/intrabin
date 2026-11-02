@@ -108,6 +108,7 @@ func Decode(b []byte) (*Command, error) {
 var codeErrors = map[string]error{
 	"not_found":     storage.ErrNotFound,
 	"conflict":      storage.ErrConflict,
+	"state_changed": storage.ErrStateChanged,
 	"token_invalid": storage.ErrTokenInvalid,
 	"token_used":    storage.ErrTokenUsed,
 	"token_expired": storage.ErrTokenExpired,
@@ -421,6 +422,18 @@ func (x *Executor) Execute(ctx context.Context, cmd *Command) error {
 		var p progressPayload
 		if dec(&p) {
 			err = st.ProgressRun(ctx, p.Run, p.Action)
+		}
+	case "drplan.create", "drplan.update":
+		var p drPlanWire
+		if dec(&p) {
+			w := p.Workflow
+			w.SecretBlob = p.SecretBlob
+			err = st.SaveDRPlan(ctx, &w, &p.Plan, cmd.Op == "drplan.create")
+		}
+	case "drplan.transition":
+		var p storage.DRTransition
+		if dec(&p) {
+			err = st.TransitionDRPlan(ctx, p)
 		}
 	case "runs.prune":
 		var p expirePayload
