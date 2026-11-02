@@ -1,0 +1,268 @@
+openapi: 3.1.0
+info:
+  title: Intrabin API
+  version: "1"
+  description: |
+    Versioned management API of an Intrabin node. Authentication uses an HttpOnly session cookie
+    (`intrabin_session`) obtained from `POST /auth/login`. Every non-GET request must send the
+    session's CSRF token (from `GET /auth/me`) in the `X-CSRF-Token` header.
+    All timestamps are RFC 3339 UTC. Errors use a uniform body:
+    `{"error":{"code":"validation_failed","message":"...","fields":{"name":"..."}}}`.
+    Management endpoints return `409 node_read_only` on nodes that are not the active controller.
+  license: { name: Apache-2.0 }
+servers:
+  - url: /api/v1
+components:
+  securitySchemes:
+    session: { type: apiKey, in: cookie, name: intrabin_session }
+    csrf: { type: apiKey, in: header, name: X-CSRF-Token }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string, examples: [validation_failed, unauthorized, forbidden, not_found, conflict, csrf_failed, rate_limited, node_read_only, invalid_transition, internal] }
+            message: { type: string }
+            fields: { type: object, additionalProperties: { type: string } }
+    Role: { type: string, enum: [owner, admin, operator, viewer] }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        display_name: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+        disabled: { type: boolean }
+        language: { type: string, enum: [en, fa] }
+        created_at: { type: string, format: date-time }
+        last_login_at: { type: string, format: date-time }
+    Policy:
+      type: object
+      description: Multi-location verification policy. Rounds are interval-aligned; a round fails only with enough independent confirmations.
+      properties:
+        confirmations_required: { type: integer, minimum: 1 }
+        min_locations: { type: integer, minimum: 1 }
+        min_valid_probes: { type: integer, minimum: 1 }
+        fail_mode: { type: string, enum: [consecutive, window] }
+        failure_rounds: { type: integer, minimum: 1 }
+        window_seconds: { type: integer }
+        recovery_rounds: { type: integer, minimum: 1 }
+        cooldown_seconds: { type: integer, minimum: 0 }
+    MonitorSettings:
+      type: object
+      properties:
+        method: { type: string }
+        headers: { type: object, additionalProperties: { type: string } }
+        body: { type: string }
+        expected_status: { type: array, items: { type: string }, examples: [["200-299", "301"]] }
+        expected_body: { type: string }
+        follow_redirects: { type: boolean }
+        max_redirects: { type: integer }
+        skip_tls_verify: { type: boolean }
+        origin_address: { type: string, description: "Connect to this IP[:port] while keeping URL host for Host/SNI" }
+        host_header: { type: string }
+        tls_server_name: { type: string }
+        degraded_latency_ms: { type: integer }
+        cert_expiry_warn_days: { type: integer }
+        cert_expiry_fail_days: { type: integer }
+        record_type: { type: string, enum: [A, AAAA, CNAME, MX, TXT, NS] }
+        expected_value: { type: string }
+        resolver: { type: string }
+        check_path: { type: string, enum: [public, origin, internal] }
+    MonitorInput:
+      type: object
+      required: [name, target]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        type: { type: string, enum: [http, tcp, dns, tls], default: http }
+        target: { type: string }
+        group_id: { type: string }
+        tags: { type: array, items: { type: string } }
+        interval_seconds: { type: integer, default: 60 }
+        timeout_seconds: { type: integer }
+        retries: { type: integer, minimum: 0, maximum: 5 }
+        enabled: { type: boolean }
+        settings: { $ref: '#/components/schemas/MonitorSettings' }
+        policy: { $ref: '#/components/schemas/Policy' }
+        node_ids: { type: array, items: { type: string } }
+        secrets:
+          type: object
+          description: Write-only. Encrypted at rest (AES-256-GCM); never returned.
+          properties:
+            basic_auth_user: { type: string }
+            basic_auth_password: { type: string }
+            secret_headers: { type: object, additionalProperties: { type: string } }
+        clear_secrets: { type: boolean }
+    MonitorState:
+      type: object
+      properties:
+        status: { type: string, enum: [UP, DOWN, DEGRADED, SUSPECTED_DOWN, UNKNOWN, PAUSED, MAINTENANCE] }
+        consecutive_failed: { type: integer }
+        consecutive_ok: { type: integer }
+        last_verdict: { type: string, enum: [ok, partial, failed, inconclusive, maintenance] }
+        last_latency_ms: { type: number }
+        status_since: { type: string, format: date-time }
+    Monitor:
+      allOf:
+        - $ref: '#/components/schemas/MonitorInput'
+        - type: object
+          properties:
+            id: { type: string }
+            version: { type: integer, description: Incremented whenever probe-relevant configuration changes }
+            secret_keys: { type: array, items: { type: string }, description: Names of stored secrets only }
+            state: { $ref: '#/components/schemas/MonitorState' }
+            uptime_24h: { type: [number, "null"] }
+    CheckResult:
+      type: object
+      properties:
+        id: { type: string }
+        monitor_id: { type: string }
+        node_id: { type: string }
+        config_version: { type: integer }
+        round_start: { type: string, format: date-time }
+        probe_at: { type: string, format: date-time }
+        received_at: { type: string, format: date-time }
+        success: { type: boolean }
+        latency_ms: { type: number }
+        http_status: { type: integer, description: Only set when an HTTP response was received }
+        error_category: { type: string, enum: ["", http_5xx, unexpected_status, body_mismatch, timeout, dns_failure, connection_refused, network_unreachable, connection_reset, tls_error, cert_expiring, dns_mismatch, invalid_config, unknown] }
+        error_message: { type: string }
+        attempts: { type: integer }
+    UptimeStats:
+      type: object
+      properties:
+        ok_rounds: { type: integer }
+        partial_rounds: { type: integer }
+        failed_rounds: { type: integer }
+        inconclusive_rounds: { type: integer }
+        maintenance_rounds: { type: integer }
+        expected_rounds: { type: integer }
+        availability: { type: [number, "null"], description: "(ok+partial)/(ok+partial+failed) in percent" }
+        coverage: { type: [number, "null"], description: "conclusive rounds / expected rounds in percent" }
+    Incident:
+      type: object
+      properties:
+        id: { type: string }
+        monitor_id: { type: string }
+        monitor_name: { type: string }
+        status: { type: string, enum: [SUSPECTED, CONFIRMED, ACKNOWLEDGED, RECOVERY_PENDING, RECOVERING, FAILED_OVER, RESOLVED, MANUAL_INTERVENTION, UNKNOWN] }
+        started_at: { type: string, format: date-time }
+        detected_at: { type: string, format: date-time }
+        confirmed_at: { type: string, format: date-time }
+        acknowledged_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+        resolution: { type: string }
+        confirmation_sources: { type: array, items: { type: string } }
+    Note:
+      type: object
+      properties: { note: { type: string, maxLength: 2000 } }
+  responses:
+    Error: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+security:
+  - session: []
+    csrf: []
+paths:
+  /health:
+    get: { summary: Liveness, security: [], responses: { '200': { description: Process is running } } }
+  /readiness:
+    get: { summary: Readiness (database reachable), security: [], responses: { '200': { description: Ready }, '503': { description: Not ready } } }
+  /setup/status:
+    get: { summary: Whether initial setup is required, security: [], responses: { '200': { description: OK } } }
+  /setup:
+    post:
+      summary: Create the first owner account (one-time, requires the setup token from the logs)
+      security: []
+      requestBody: { content: { application/json: { schema: { type: object, required: [setup_token, username, password], properties: { setup_token: { type: string }, username: { type: string }, password: { type: string, minLength: 10 }, display_name: { type: string }, language: { type: string }, instance_name: { type: string } } } } } }
+      responses: { '201': { description: Created; session cookie set }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+  /auth/login:
+    post:
+      summary: Sign in (rate limited per IP and per username)
+      security: []
+      requestBody: { content: { application/json: { schema: { type: object, properties: { username: { type: string }, password: { type: string } } } } } }
+      responses: { '200': { description: Session cookie set }, '401': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+  /auth/logout: { post: { summary: Sign out, responses: { '200': { description: OK } } } }
+  /auth/me: { get: { summary: Current user, CSRF token, permissions and node info, responses: { '200': { description: OK } } } }
+  /auth/password:
+    post: { summary: Change own password (revokes other sessions), requestBody: { content: { application/json: { schema: { type: object, properties: { current_password: { type: string }, new_password: { type: string } } } } } }, responses: { '200': { description: OK }, '422': { $ref: '#/components/responses/Error' } } }
+  /auth/profile:
+    patch: { summary: Update own display name / language, responses: { '200': { description: OK } } }
+  /users:
+    get: { summary: List users (user.manage), responses: { '200': { description: OK } } }
+    post: { summary: Create user, responses: { '201': { description: Created }, '403': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } } }
+  /users/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    patch: { summary: Update role / disabled / display name (last-owner and self protections apply), responses: { '200': { description: OK }, '409': { $ref: '#/components/responses/Error' } } }
+    delete: { summary: Delete user, responses: { '200': { description: OK } } }
+  /users/{id}/password:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post: { summary: Administrative password reset (revokes sessions), responses: { '200': { description: OK } } }
+  /monitors:
+    get:
+      summary: List monitors with state and 24h uptime
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: group_id, in: query, schema: { type: string } }
+        - { name: tag, in: query, schema: { type: string } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { monitors: { type: array, items: { $ref: '#/components/schemas/Monitor' } } } } } } } }
+    post:
+      summary: Create monitor (monitor.manage)
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/MonitorInput' } } } }
+      responses: { '201': { description: Created }, '422': { $ref: '#/components/responses/Error' } }
+  /monitors/test:
+    post: { summary: Run one probe with the submitted configuration without saving it, requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/MonitorInput' } } } }, responses: { '200': { description: Probe outcome } } }
+  /monitors/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get: { summary: Get monitor, responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+    put: { summary: Replace monitor definition (secrets kept unless provided or cleared), requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/MonitorInput' } } } }, responses: { '200': { description: OK } } }
+    delete: { summary: Delete monitor and its history, responses: { '200': { description: OK } } }
+  /monitors/{id}/pause: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], post: { summary: Pause, responses: { '200': { description: OK } } } }
+  /monitors/{id}/resume: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], post: { summary: Resume, responses: { '200': { description: OK } } } }
+  /monitors/{id}/results:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      summary: Raw probe results, newest first
+      parameters: [{ name: range, in: query, schema: { type: string, enum: [1h, 6h, 24h, 7d, 30d, 90d] } }, { name: limit, in: query, schema: { type: integer, maximum: 5000 } }, { name: node_id, in: query, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { results: { type: array, items: { $ref: '#/components/schemas/CheckResult' } } } } } } } }
+  /monitors/{id}/uptime:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get: { summary: Availability and coverage for 24h/7d/30d/90d plus 90 daily buckets, responses: { '200': { description: OK } } }
+  /monitors/{id}/stats:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }, { name: range, in: query, schema: { type: string } }]
+    get: { summary: Latency series, status code / error / per-node breakdown, recent rounds, certificate expiry, incidents, responses: { '200': { description: OK } } }
+  /monitor-groups:
+    get: { summary: List groups, responses: { '200': { description: OK } } }
+    post: { summary: Create group, responses: { '201': { description: Created } } }
+  /monitor-groups/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    patch: { summary: Update group, responses: { '200': { description: OK } } }
+    delete: { summary: Delete group (monitors become ungrouped), responses: { '200': { description: OK } } }
+  /incidents:
+    get:
+      summary: List incidents
+      parameters: [{ name: open, in: query, schema: { type: boolean } }, { name: status, in: query, schema: { type: string } }, { name: monitor_id, in: query, schema: { type: string } }, { name: before, in: query, schema: { type: string, format: date-time } }, { name: limit, in: query, schema: { type: integer } }]
+      responses: { '200': { description: OK } }
+  /incidents/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get: { summary: Incident with timeline events, responses: { '200': { description: OK } } }
+  /incidents/{id}/acknowledge: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], post: { summary: Acknowledge (incident.respond), requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } }, responses: { '200': { description: OK }, '409': { $ref: '#/components/responses/Error' } } } }
+  /incidents/{id}/resolve: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], post: { summary: Resolve manually, requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } }, responses: { '200': { description: OK } } } }
+  /incidents/{id}/notes: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], post: { summary: Add timeline note, requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } }, responses: { '200': { description: OK } } } }
+  /maintenance-windows:
+    get: { summary: List current, upcoming and recent windows, responses: { '200': { description: OK } } }
+    post: { summary: Create window (monitor_id empty = all monitors), responses: { '201': { description: Created } } }
+  /maintenance-windows/{id}: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], delete: { summary: Delete window, responses: { '200': { description: OK } } } }
+  /overview: { get: { summary: Dashboard aggregates, responses: { '200': { description: OK } } } }
+  /audit-logs:
+    get:
+      summary: Searchable audit log (audit.view)
+      parameters: [{ name: q, in: query, schema: { type: string } }, { name: action, in: query, schema: { type: string }, description: Action prefix }, { name: actor, in: query, schema: { type: string } }, { name: target_id, in: query, schema: { type: string } }, { name: since, in: query, schema: { type: string, format: date-time } }, { name: before, in: query, schema: { type: string, format: date-time } }, { name: limit, in: query, schema: { type: integer } }]
+      responses: { '200': { description: OK } }
+  /settings:
+    get: { summary: Instance settings, responses: { '200': { description: OK } } }
+    patch: { summary: Update instance settings (settings.manage), responses: { '200': { description: OK } } }
+  /node: { get: { summary: Local node status (available on every node, including followers), responses: { '200': { description: OK } } } }
+  /cluster: { get: { summary: Cluster membership and quorum status, responses: { '200': { description: OK } } } }

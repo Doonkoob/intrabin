@@ -1,0 +1,49 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - name: Placeholder UI for embed
+        run: touch internal/web/dist/.gitkeep
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: apps/web/package-lock.json }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: make build
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: apps/web
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - name: Start test target
+        run: python3 -m http.server 9090 --bind 127.0.0.1 &
+      - run: npx playwright test
+        working-directory: apps/web
+        env: { E2E_TARGET: "http://127.0.0.1:9090/" }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: playwright, path: apps/web/test-results, retention-days: 7 }
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build multi-arch image
+        run: docker buildx build --platform linux/amd64,linux/arm64 -t intrabin/intrabin:ci .
