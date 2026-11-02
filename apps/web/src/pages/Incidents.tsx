@@ -48,7 +48,7 @@ export function IncidentDetailPage() {
   const { id } = useParams()
   const { t, loc } = usePrefs()
   const { can } = useSession()
-  const { data, error, loading, reload } = useApi<{ incident: Incident; events: IncidentEvent[] }>(`/incidents/${id}`, 15000)
+  const { data, error, loading, reload } = useApi<{ incident: Incident; events: IncidentEvent[]; node_names?: Record<string, string> }>(`/incidents/${id}`, 15000)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -82,7 +82,7 @@ export function IncidentDetailPage() {
             <dt className="text-muted">{t('incidents.duration')}</dt><dd className="tabular">{duration(loc, i, t('incidents.ongoing'))}</dd>
             {i.resolution && <><dt className="text-muted">{t('incidents.resolution')}</dt><dd>{i.resolution}</dd></>}
             <dt className="text-muted">{t('mdetail.errors')}</dt><dd>{i.last_error_category ? t(`err.${i.last_error_category}` as Key) : '—'}</dd>
-            <dt className="text-muted">{t('incidents.sources')}</dt><dd className="ltr break-all text-start text-xs">{i.confirmation_sources.join(', ') || '—'}</dd>
+            <dt className="text-muted">{t('incidents.sources')}</dt><dd className="text-xs">{i.confirmation_sources.map((n) => data!.node_names?.[n] ?? n.slice(0, 8)).join(', ') || '—'}</dd>
           </dl>
         </Card>
         <Card title={t('incidents.timeline')} className="lg:col-span-2">

@@ -206,7 +206,7 @@ func (s *Server) handleGetIncident(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"incident": in, "events": evs})
+	writeJSON(w, 200, map[string]any{"incident": in, "events": evs, "node_names": s.nodeNames()})
 }
 
 type noteReq struct {
