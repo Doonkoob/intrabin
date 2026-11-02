@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/intrabin/intrabin/internal/audit"
+	"github.com/intrabin/intrabin/internal/automation"
 	"github.com/intrabin/intrabin/internal/cluster"
 	"github.com/intrabin/intrabin/internal/config"
 	"github.com/intrabin/intrabin/internal/controlplane"
@@ -56,7 +57,9 @@ func newEnv(t *testing.T) *env {
 	master, _ := security.NewSecretBox(bytes.Repeat([]byte{1}, 32))
 	cp := controlplane.New(st)
 	cm := cluster.New(cluster.Options{DataDir: dir, Listen: "127.0.0.1:0", Store: st, CP: cp, DataBox: box, MasterBox: master, Node: n, Log: log})
-	s := New(Deps{Config: cfg, Store: st, CP: cp, Cluster: cm, Node: n, Engine: eng, Prober: prober, Incidents: inc, Audit: audit.New(cp, log), SecretBox: box, Log: log, SetupToken: setupTok, Argon2: &fast})
+	auto := &automation.Engine{Store: st, CP: cp, Incidents: inc, Fence: cm.Fence, Active: n.CanManage, Box: box, Log: log, Interval: 100 * time.Millisecond}
+	go auto.Run(t.Context())
+	s := New(Deps{Config: cfg, Store: st, CP: cp, Cluster: cm, Node: n, Engine: eng, Prober: prober, Incidents: inc, Audit: audit.New(cp, log), SecretBox: box, Log: log, SetupToken: setupTok, Argon2: &fast, Automation: auto})
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 	return &env{t: t, srv: srv, store: st, node: n}

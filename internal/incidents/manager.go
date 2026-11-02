@@ -244,3 +244,22 @@ func (m *Manager) AddNote(ctx context.Context, id, actor, note string) error {
 	in.UpdatedAt = m.now()
 	return m.store.SaveIncident(ctx, in, newEvent(in, "note", in.Status, in.Status, actor, note, in.UpdatedAt, nil))
 }
+
+// SetStatus moves an incident to a recovery-related status (used by workflows and operators).
+// The transition must be permitted by the state machine.
+func (m *Manager) SetStatus(ctx context.Context, id string, to model.IncidentStatus, actor, note string) (*model.Incident, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	in, err := m.store.GetIncident(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if in.Status == to {
+		return in, nil
+	}
+	msg := note
+	if msg == "" {
+		msg = fmt.Sprintf("Status set to %s", to)
+	}
+	return in, m.transitionLocked(ctx, in, to, actor, msg, nil)
+}

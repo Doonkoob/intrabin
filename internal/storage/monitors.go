@@ -291,39 +291,45 @@ func (s *Store) DeleteGroup(ctx context.Context, id string) error {
 	return nil
 }
 
-// ReplaceSecretBlobs rewrites encrypted monitor secrets in one transaction (node-local key rotation
-// performed before a node founds a cluster). fn returns the new blob for each existing blob.
-func (s *Store) ReplaceSecretBlobs(ctx context.Context, fn func(id string, blob []byte) ([]byte, error)) error {
+// ReplaceSecretBlobs rewrites encrypted monitor and workflow secrets in one transaction
+// (node-local key rotation performed before a node founds a cluster). fn receives the blob's
+// associated data ("monitor:<id>" or "workflow:<id>:secrets") and returns the new blob.
+func (s *Store) ReplaceSecretBlobs(ctx context.Context, fn func(aad string, blob []byte) ([]byte, error)) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT id, secret_settings FROM monitors WHERE secret_settings IS NOT NULL AND length(secret_settings) > 0`)
-	if err != nil {
-		return err
-	}
-	type item struct {
-		id   string
-		blob []byte
-	}
-	var items []item
-	for rows.Next() {
-		var it item
-		if err := rows.Scan(&it.id, &it.blob); err != nil {
-			rows.Close()
-			return err
-		}
-		items = append(items, it)
-	}
-	rows.Close()
-	for _, it := range items {
-		nb, err := fn(it.id, it.blob)
+	for _, t := range []struct{ table, col, prefix, suffix string }{
+		{"monitors", "secret_settings", "monitor:", ""},
+		{"workflows", "secret_env", "workflow:", ":secrets"},
+	} {
+		rows, err := tx.QueryContext(ctx, `SELECT id, `+t.col+` FROM `+t.table+` WHERE `+t.col+` IS NOT NULL AND length(`+t.col+`) > 0`)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE monitors SET secret_settings=? WHERE id=?`, nb, it.id); err != nil {
-			return err
+		type item struct {
+			id   string
+			blob []byte
+		}
+		var items []item
+		for rows.Next() {
+			var it item
+			if err := rows.Scan(&it.id, &it.blob); err != nil {
+				rows.Close()
+				return err
+			}
+			items = append(items, it)
+		}
+		rows.Close()
+		for _, it := range items {
+			nb, err := fn(t.prefix+it.id+t.suffix, it.blob)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE `+t.table+` SET `+t.col+`=? WHERE id=?`, nb, it.id); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit()

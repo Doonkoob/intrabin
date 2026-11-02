@@ -23,9 +23,52 @@ components:
         error:
           type: object
           properties:
-            code: { type: string, examples: [validation_failed, unauthorized, forbidden, not_found, conflict, csrf_failed, rate_limited, node_read_only, invalid_transition, internal] }
+            code: { type: string, examples: [validation_failed, unauthorized, forbidden, not_found, conflict, csrf_failed, rate_limited, node_read_only, no_quorum, workflow_busy, invalid_state, invalid_transition, internal] }
             message: { type: string }
             fields: { type: object, additionalProperties: { type: string } }
+    WorkflowInput:
+      type: object
+      required: [name, trigger, steps]
+      properties:
+        name: { type: string, maxLength: 100 }
+        description: { type: string }
+        enabled: { type: boolean, default: false }
+        operator_can_run: { type: boolean, default: false }
+        trigger:
+          type: object
+          properties:
+            type: { type: string, enum: [manual, incident, schedule] }
+            on_statuses: { type: array, items: { type: string }, description: "incident: statuses that start a run (default CONFIRMED)" }
+            monitor_ids: { type: array, items: { type: string } }
+            group_ids: { type: array, items: { type: string } }
+            tags: { type: array, items: { type: string } }
+            interval_seconds: { type: integer, minimum: 60, description: schedule interval }
+        steps:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              type: { type: string, enum: [script, http, wait, incident_status] }
+              timeout_seconds: { type: integer }
+              on_failure: { type: string, enum: [stop, continue] }
+              retries: { type: integer, minimum: 0, maximum: 5, description: retries after a definite failure only }
+              language: { type: string, enum: [bash, python] }
+              script: { type: string }
+              env: { type: object, additionalProperties: { type: string } }
+              method: { type: string }
+              url: { type: string, description: "http(s); {{placeholders}} allowed in path and query" }
+              headers: { type: object, additionalProperties: { type: string } }
+              body: { type: string }
+              expected_status: { type: array, items: { type: string }, examples: [["2xx", "409"]] }
+              allow_private_network: { type: boolean, default: false }
+              seconds: { type: integer, description: wait duration }
+              status: { type: string, description: incident_status target }
+              note: { type: string }
+        secrets: { type: object, additionalProperties: { type: string }, writeOnly: true }
+        clear_secrets: { type: boolean }
     Role: { type: string, enum: [owner, admin, operator, viewer] }
     User:
       type: object
@@ -287,3 +330,43 @@ paths:
   /cluster/nodes/{id}/promote: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], post: { summary: Promote a caught-up and reachable non-voter to voter, responses: { '200': { description: OK }, '400': { description: Not reachable or still catching up } } } }
   /cluster/nodes/{id}/demote: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], post: { summary: Demote a voter to non-voter, responses: { '200': { description: OK } } } }
   /cluster/nodes/{id}: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], delete: { summary: Remove a member (never automatic), responses: { '200': { description: OK } } } }
+  /workflows:
+    get: { summary: List workflows (secret values are never returned; secret_keys lists names), responses: { '200': { description: OK } } }
+    post:
+      summary: "Create a workflow (automation.manage). Disabled unless enabled=true. Body: { name, description, enabled, operator_can_run, trigger, steps[], secrets: {NAME: value} }"
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowInput' } } } }
+      responses: { '201': { description: Created }, '422': { $ref: '#/components/responses/Error' } }
+  /workflows/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get: { summary: Get a workflow and its 20 most recent runs, responses: { '200': { description: OK } } }
+    put:
+      summary: "Replace a workflow definition (automation.manage). secrets: omitted keeps all; a key with an empty value keeps that value; clear_secrets removes all."
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowInput' } } } }
+      responses: { '200': { description: OK }, '422': { $ref: '#/components/responses/Error' } }
+    delete: { summary: "Delete a workflow and its run history. 409 workflow_busy while runs are active or have an unknown outcome.", responses: { '204': { description: Deleted }, '409': { $ref: '#/components/responses/Error' } } }
+  /workflows/{id}/run:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      summary: "Start a manual run (automation.run; operators only for workflows with operator_can_run). Body: { context: { key: value } }; context.incident_id targets an incident."
+      responses: { '202': { description: Run created }, '403': { $ref: '#/components/responses/Error' } }
+  /workflow-runs:
+    get:
+      summary: List runs
+      parameters:
+        - { name: workflow_id, in: query, schema: { type: string } }
+        - { name: status, in: query, description: "Comma-separated: pending, running, waiting, succeeded, failed, cancelled, unknown_outcome", schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, maximum: 500 } }
+      responses: { '200': { description: OK } }
+  /workflow-runs/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get: { summary: "Get a run with its action records (status, fence term/leader, exit code, redacted output)", responses: { '200': { description: OK } } }
+  /workflow-runs/{id}/cancel:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post: { summary: "Cancel a run. A step already executing is not interrupted; its result is recorded but no further steps run.", responses: { '200': { description: OK }, '409': { description: Already finished } } }
+  /workflow-actions/{id}/reconcile:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      summary: "Record the real outcome of an action in UNKNOWN_OUTCOME (automation.manage). The action is never re-run. Body: { result: succeeded|failed, note (required) }"
+      responses: { '200': { description: OK }, '409': { description: The action is not in unknown_outcome }, '422': { $ref: '#/components/responses/Error' } }
+  /automation/status:
+    get: { summary: "Whether this node executes runs, Action Runner reachability and interpreters, and run counts by status", responses: { '200': { description: OK } } }

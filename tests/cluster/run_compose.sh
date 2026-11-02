@@ -17,4 +17,4 @@ stop_node() { $CONTROL_COMPOSE stop node\$1 >/dev/null; }
 start_node() { $CONTROL_COMPOSE start node\$1 >/dev/null; }
 EOS
 N1=http://127.0.0.1:18081 N2=http://127.0.0.1:18082 N3=http://127.0.0.1:18083 SETUP_TOKEN=compose-cluster-setup-token-0123 \
-TARGET_URL=http://target:8080/api/v1/health CONTROL=/tmp/intrabin-compose-control.sh "$ROOT/tests/cluster/cluster_e2e.sh"
+WITH_RUNNER=1 TARGET_URL=http://target:8080/api/v1/health CONTROL=/tmp/intrabin-compose-control.sh "$ROOT/tests/cluster/cluster_e2e.sh"

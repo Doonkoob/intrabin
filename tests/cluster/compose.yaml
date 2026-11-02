@@ -29,6 +29,10 @@ x-env: &env
   INTRABIN_SETUP_TOKEN: compose-cluster-setup-token-0123
   INTRABIN_MIN_INTERVAL: 5s
   INTRABIN_LOG_LEVEL: info
+  # One Action Runner shared by all nodes: whichever node leads dispatches scripts to it, and a
+  # new leader can recover the outcome of a script dispatched by the previous leader.
+  INTRABIN_RUNNER_URL: http://runner:8090
+  INTRABIN_RUNNER_TOKEN: compose-cluster-runner-token-0123456789
 
 services:
   node1:
@@ -61,6 +65,20 @@ services:
       INTRABIN_PUBLIC_URL: http://127.0.0.1:18083
     ports: ["127.0.0.1:18083:8080"]
     volumes: [node3-data:/var/lib/intrabin]
+  runner:
+    image: ${INTRABIN_RUNNER_IMAGE:-intrabin/runner:latest}
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    environment:
+      INTRABIN_RUNNER_TOKEN: compose-cluster-runner-token-0123456789
+      INTRABIN_LOG_LEVEL: info
+    volumes: [runner-data:/var/lib/intrabin-runner]
+    networks: [mesh]
   # An HTTP target every node probes during the test (a throwaway standalone instance whose
   # health endpoint answers 200; no extra image needed).
   target:
@@ -81,3 +99,4 @@ volumes:
   node1-data: {}
   node2-data: {}
   node3-data: {}
+  runner-data: {}

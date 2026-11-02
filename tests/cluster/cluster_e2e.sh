@@ -8,6 +8,8 @@
 #   stop_node / start_node   shell functions (sourced from $CONTROL) that stop/start node N (1..3)
 # Optional:
 #   CONTROL             file defining stop_node/start_node
+#   WITH_RUNNER=1       all nodes share an Action Runner: also test a script action that is in
+#                       flight while the leader is killed (it must be recovered, not re-run)
 #
 # The test: setup on node 1, found a cluster, join nodes 2 and 3 through the setup/join API,
 # promote both to voters, create a monitor, verify multi-node probing and follower behaviour,
@@ -104,6 +106,19 @@ api 2 POST /api/v1/monitor-groups '{"name":"from-follower"}' >/dev/null
 [ "$CODE" = 409 ] || fail "follower accepted a write ($CODE)"
 jq -e '.error.code == "node_read_only" and (.error.leader_url | length > 0)' "$TMP/body" >/dev/null || fail "read-only error lacks leader_url: $(cat "$TMP/body")"
 
+if [ "${WITH_RUNNER:-0}" = 1 ]; then
+  log "automation: start a slow script on the leader"
+  # The script appends to a file in the runner's work directory ($HOME is the per-action job dir).
+  api 1 POST /api/v1/workflows '{"name":"slow script","trigger":{"type":"manual"},"steps":[{"name":"slow","type":"script","language":"bash","timeout_seconds":60,"script":"sleep 10\necho x >> \"$HOME/../../e2e-executions\"\necho finished"}]}' >/dev/null
+  [ "$CODE" = 201 ] || fail "create workflow returned $CODE: $(cat "$TMP/body")"
+  WF=$(jq -r .workflow.id "$TMP/body")
+  api 1 POST "/api/v1/workflows/$WF/run" '{}' >/dev/null
+  [ "$CODE" = 202 ] || fail "run workflow returned $CODE: $(cat "$TMP/body")"
+  RUN=$(jq -r .run.id "$TMP/body")
+  dispatching() { api 1 GET "/api/v1/workflow-runs/$RUN" | jq -e '.actions[0].status == "dispatching"'; }
+  wait_until 20 "script action dispatched" dispatching
+fi
+
 log "kill the leader (node 1)"
 stop_node 1
 NEW=""
@@ -118,6 +133,22 @@ R1=$(last_round)
 advanced() { [ "$(last_round)" -gt "$R1" ]; }
 wait_until 40 "evaluation continues on the new leader" advanced
 is_up $NEW >/dev/null || fail "monitor not UP on new leader"
+
+if [ "${WITH_RUNNER:-0}" = 1 ]; then
+  log "automation: the new leader recovers the in-flight script's outcome from the runner"
+  recovered() { api $NEW GET "/api/v1/workflow-runs/$RUN" | jq -e '.run.status == "succeeded" and .actions[0].status == "reconciled_succeeded" and .actions[0].reconciled_by == "runner"'; }
+  wait_until 60 "run reconciled from the runner record" recovered
+  api $NEW GET "/api/v1/workflow-runs/$RUN" | jq -e '(.actions | length) == 1 and (.actions[0].output | contains("finished"))' >/dev/null || fail "unexpected actions: $(cat "$TMP/body")"
+  api $NEW POST /api/v1/workflows '{"name":"count","trigger":{"type":"manual"},"steps":[{"name":"count","type":"script","language":"bash","script":"wc -l < \"$HOME/../../e2e-executions\""}]}' >/dev/null
+  WF2=$(jq -r .workflow.id "$TMP/body")
+  api $NEW POST "/api/v1/workflows/$WF2/run" '{}' >/dev/null
+  RUN2=$(jq -r .run.id "$TMP/body")
+  counted() { api $NEW GET "/api/v1/workflow-runs/$RUN2" | jq -e '.run.status == "succeeded"'; }
+  wait_until 30 "count run" counted
+  n=$(api $NEW GET "/api/v1/workflow-runs/$RUN2" | jq -r '.actions[0].output' | tr -d '[:space:]')
+  [ "$n" = 1 ] || fail "the script ran $n times across the failover, want exactly 1"
+  log "script executed exactly once across the failover"
+fi
 
 log "restart the old leader: it must rejoin as a follower"
 start_node 1

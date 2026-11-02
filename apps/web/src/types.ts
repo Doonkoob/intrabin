@@ -239,3 +239,96 @@ export interface EnrollmentToken {
   used_by_node?: string
   revoked_at?: string
 }
+
+export type StepType = 'script' | 'http' | 'wait' | 'incident_status'
+
+export interface WorkflowStep {
+  name: string
+  type: StepType
+  timeout_seconds?: number
+  on_failure?: 'stop' | 'continue'
+  retries?: number
+  language?: 'bash' | 'python'
+  script?: string
+  env?: Record<string, string>
+  method?: string
+  url?: string
+  headers?: Record<string, string>
+  body?: string
+  expected_status?: string[]
+  allow_private_network?: boolean
+  seconds?: number
+  status?: IncidentStatus
+  note?: string
+}
+
+export interface WorkflowTrigger {
+  type: 'manual' | 'incident' | 'schedule'
+  on_statuses?: IncidentStatus[]
+  monitor_ids?: string[]
+  group_ids?: string[]
+  tags?: string[]
+  interval_seconds?: number
+}
+
+export interface Workflow {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+  operator_can_run: boolean
+  trigger: WorkflowTrigger
+  steps: WorkflowStep[]
+  secret_keys: string[]
+  version: number
+  next_fire_at?: string
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export type RunStatus = 'pending' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'unknown_outcome'
+export type ActionStatus = 'dispatching' | 'succeeded' | 'failed' | 'unknown_outcome' | 'reconciled_succeeded' | 'reconciled_failed'
+
+export interface WorkflowRun {
+  id: string
+  workflow_id: string
+  workflow_name?: string
+  workflow_version: number
+  steps: WorkflowStep[]
+  trigger_type: string
+  trigger_ref: string
+  context: Record<string, string>
+  status: RunStatus
+  current_step: number
+  next_at?: string
+  created_by: string
+  created_at: string
+  started_at?: string
+  finished_at?: string
+  error: string
+  updated_at: string
+}
+
+export interface WorkflowAction {
+  id: string
+  run_id: string
+  step_index: number
+  step_type: StepType
+  attempt: number
+  status: ActionStatus
+  fence_term: number
+  fence_leader: string
+  started_at: string
+  finished_at?: string
+  exit_code?: number
+  output: string
+  error: string
+  reconciled_by?: string
+}
+
+export interface AutomationStatus {
+  executes_here: boolean
+  runner: { configured: boolean; reachable: boolean; interpreters: Record<string, boolean> }
+  runs: Record<string, number>
+}

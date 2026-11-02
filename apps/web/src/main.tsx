@@ -15,6 +15,7 @@ import { IncidentDetailPage, IncidentsPage } from './pages/Incidents'
 import { MaintenancePage } from './pages/Maintenance'
 import { ClusterPage, FollowerStatusPage } from './pages/Cluster'
 import { AuditPage } from './pages/Audit'
+import { AutomationPage, RunDetailPage, WorkflowDetailPage, WorkflowFormPage } from './pages/Automation'
 import { UsersPage } from './pages/Users'
 import { SettingsPage } from './pages/Settings'
 
@@ -62,6 +63,11 @@ function Root() {
         <Route path="incidents" element={<IncidentsPage />} />
         <Route path="incidents/:id" element={<IncidentDetailPage />} />
         <Route path="maintenance" element={<MaintenancePage />} />
+        <Route path="automation" element={<AutomationPage />} />
+        <Route path="automation/new" element={<WorkflowFormPage />} />
+        <Route path="automation/runs/:id" element={<RunDetailPage />} />
+        <Route path="automation/:id" element={<WorkflowDetailPage />} />
+        <Route path="automation/:id/edit" element={<WorkflowFormPage />} />
         <Route path="cluster" element={<ClusterPage />} />
         <Route path="audit" element={<AuditPage />} />
         <Route path="users" element={<UsersPage />} />

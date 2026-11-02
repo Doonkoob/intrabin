@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1.7
+# Isolated Action Runner image: the intrabin binary in `runner` mode plus Bash and Python 3.
+# It has no access to the control-plane database, master key or Docker socket.
+ARG RUNTIME_BASE=python:3.13-slim-bookworm
+
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+ARG TARGETOS TARGETARCH
+ARG VERSION=dev
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=secret,id=extra_ca,required=false \
+    if [ -f /run/secrets/extra_ca ]; then cat /etc/ssl/certs/ca-certificates.crt /run/secrets/extra_ca > /tmp/ca.pem; export SSL_CERT_FILE=/tmp/ca.pem; fi; \
+    go mod download
+COPY cmd/ cmd/
+COPY internal/ internal/
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
+    -ldflags "-s -w -X github.com/intrabin/intrabin/internal/node.Version=${VERSION}" -o /out/intrabin ./cmd/intrabin
+
+FROM ${RUNTIME_BASE}
+LABEL org.opencontainers.image.title="Intrabin Action Runner" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.source="https://github.com/intrabin/intrabin"
+RUN groupadd --gid 10001 runner && useradd --uid 10001 --gid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin --no-create-home runner \
+    && mkdir -p /var/lib/intrabin-runner && chown 10001:10001 /var/lib/intrabin-runner && chmod 0700 /var/lib/intrabin-runner
+COPY --from=build /out/intrabin /usr/local/bin/intrabin
+ENV INTRABIN_RUNNER_LISTEN=:8090 \
+    INTRABIN_RUNNER_WORKDIR=/var/lib/intrabin-runner \
+    PYTHONDONTWRITEBYTECODE=1
+USER 10001:10001
+EXPOSE 8090
+VOLUME ["/var/lib/intrabin-runner"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD ["python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8090/v1/health', timeout=3).status == 200 else 1)"]
+ENTRYPOINT ["/usr/local/bin/intrabin"]
+CMD ["runner"]

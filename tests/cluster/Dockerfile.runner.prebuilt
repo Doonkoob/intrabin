@@ -1,0 +1,12 @@
+# Action Runner image from a locally built static binary (same layout as ./Dockerfile.runner).
+ARG RUNTIME_BASE=python:3.13-slim-bookworm
+FROM ${RUNTIME_BASE}
+RUN groupadd --gid 10001 runner && useradd --uid 10001 --gid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin --no-create-home runner \
+    && mkdir -p /var/lib/intrabin-runner && chown 10001:10001 /var/lib/intrabin-runner && chmod 0700 /var/lib/intrabin-runner
+COPY intrabin /usr/local/bin/intrabin
+ENV INTRABIN_RUNNER_LISTEN=:8090 INTRABIN_RUNNER_WORKDIR=/var/lib/intrabin-runner PYTHONDONTWRITEBYTECODE=1
+USER 10001:10001
+EXPOSE 8090
+VOLUME ["/var/lib/intrabin-runner"]
+ENTRYPOINT ["/usr/local/bin/intrabin"]
+CMD ["runner"]

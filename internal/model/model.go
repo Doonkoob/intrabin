@@ -362,3 +362,122 @@ type ClusterNode struct {
 	JoinedAt    time.Time `json:"joined_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
+
+// ---- automation (Phase 3) ----
+
+// WorkflowTrigger defines when a workflow starts.
+type WorkflowTrigger struct {
+	Type string `json:"type"` // manual | incident | schedule
+	// incident trigger
+	OnStatuses []IncidentStatus `json:"on_statuses,omitempty"`
+	MonitorIDs []string         `json:"monitor_ids,omitempty"`
+	GroupIDs   []string         `json:"group_ids,omitempty"`
+	Tags       []string         `json:"tags,omitempty"`
+	// schedule trigger
+	IntervalSeconds int `json:"interval_seconds,omitempty"`
+}
+
+// WorkflowStep is one step of a workflow.
+type WorkflowStep struct {
+	Name           string `json:"name"`
+	Type           string `json:"type"` // script | http | wait | incident_status
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+	OnFailure      string `json:"on_failure,omitempty"` // stop (default) | continue
+	Retries        int    `json:"retries,omitempty"`    // retries after a definite failure only
+
+	// script
+	Language string            `json:"language,omitempty"` // bash | python
+	Script   string            `json:"script,omitempty"`
+	Env      map[string]string `json:"env,omitempty"`
+	// http
+	Method              string            `json:"method,omitempty"`
+	URL                 string            `json:"url,omitempty"`
+	Headers             map[string]string `json:"headers,omitempty"`
+	Body                string            `json:"body,omitempty"`
+	ExpectedStatus      []string          `json:"expected_status,omitempty"`
+	AllowPrivateNetwork bool              `json:"allow_private_network,omitempty"`
+	// wait
+	Seconds int `json:"seconds,omitempty"`
+	// incident_status
+	Status IncidentStatus `json:"status,omitempty"`
+	Note   string         `json:"note,omitempty"`
+}
+
+// Workflow is an automation definition.
+type Workflow struct {
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Enabled     bool            `json:"enabled"`
+	Trigger     WorkflowTrigger `json:"trigger"`
+	Steps       []WorkflowStep  `json:"steps"`
+	SecretBlob  []byte          `json:"-"`
+	SecretKeys  []string        `json:"secret_keys"`
+	// OperatorCanRun lets users with the operator role start this workflow manually.
+	OperatorCanRun bool       `json:"operator_can_run"`
+	Version        int        `json:"version"`
+	NextFireAt     *time.Time `json:"next_fire_at,omitempty"`
+	CreatedBy      string     `json:"created_by"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+// Run statuses.
+const (
+	RunPending        = "pending"
+	RunRunning        = "running"
+	RunWaiting        = "waiting"
+	RunSucceeded      = "succeeded"
+	RunFailed         = "failed"
+	RunCancelled      = "cancelled"
+	RunUnknownOutcome = "unknown_outcome" // an action's result is uncertain; needs reconciliation
+)
+
+// Action statuses.
+const (
+	ActionDispatching         = "dispatching"
+	ActionSucceeded           = "succeeded"
+	ActionFailed              = "failed"
+	ActionUnknownOutcome      = "unknown_outcome"
+	ActionReconciledSucceeded = "reconciled_succeeded"
+	ActionReconciledFailed    = "reconciled_failed"
+)
+
+// WorkflowRun is one execution of a workflow.
+type WorkflowRun struct {
+	ID              string            `json:"id"`
+	WorkflowID      string            `json:"workflow_id"`
+	WorkflowName    string            `json:"workflow_name,omitempty"`
+	WorkflowVersion int               `json:"workflow_version"`
+	Steps           []WorkflowStep    `json:"steps"`
+	TriggerType     string            `json:"trigger_type"`
+	TriggerRef      string            `json:"trigger_ref"`
+	Context         map[string]string `json:"context"`
+	Status          string            `json:"status"`
+	CurrentStep     int               `json:"current_step"`
+	NextAt          *time.Time        `json:"next_at,omitempty"`
+	CreatedBy       string            `json:"created_by"`
+	CreatedAt       time.Time         `json:"created_at"`
+	StartedAt       *time.Time        `json:"started_at,omitempty"`
+	FinishedAt      *time.Time        `json:"finished_at,omitempty"`
+	Error           string            `json:"error"`
+	UpdatedAt       time.Time         `json:"updated_at"`
+}
+
+// WorkflowAction is the durable record of one external action dispatch (the fencing record).
+type WorkflowAction struct {
+	ID           string     `json:"id"`
+	RunID        string     `json:"run_id"`
+	StepIndex    int        `json:"step_index"`
+	StepType     string     `json:"step_type"`
+	Attempt      int        `json:"attempt"`
+	Status       string     `json:"status"`
+	FenceTerm    uint64     `json:"fence_term"`
+	FenceLeader  string     `json:"fence_leader"`
+	StartedAt    time.Time  `json:"started_at"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+	ExitCode     *int       `json:"exit_code,omitempty"`
+	Output       string     `json:"output"`
+	Error        string     `json:"error"`
+	ReconciledBy string     `json:"reconciled_by,omitempty"`
+}

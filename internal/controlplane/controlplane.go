@@ -197,6 +197,22 @@ type consumePayload struct {
 	NodeID     string `json:"node_id"`
 }
 
+type workflowWire struct {
+	model.Workflow
+	SecretBlob []byte `json:"secret_blob"`
+}
+
+type progressPayload struct {
+	Run    *model.WorkflowRun    `json:"run,omitempty"`
+	Action *model.WorkflowAction `json:"action,omitempty"`
+}
+
+type firePayload struct {
+	WorkflowID string             `json:"workflow_id"`
+	Next       time.Time          `json:"next"`
+	Run        *model.WorkflowRun `json:"run,omitempty"`
+}
+
 type restorePayload struct {
 	Dump []byte `json:"dump"`
 }
@@ -364,6 +380,42 @@ func (x *Executor) Execute(ctx context.Context, cmd *Command) error {
 		var p idPayload
 		if dec(&p) {
 			err = st.DeleteClusterNode(ctx, p.ID)
+		}
+	case "workflow.create", "workflow.update":
+		var p workflowWire
+		if dec(&p) {
+			w := p.Workflow
+			w.SecretBlob = p.SecretBlob
+			if cmd.Op == "workflow.create" {
+				err = st.CreateWorkflow(ctx, &w)
+			} else {
+				err = st.UpdateWorkflow(ctx, &w)
+			}
+		}
+	case "workflow.delete":
+		var p idPayload
+		if dec(&p) {
+			err = st.DeleteWorkflow(ctx, p.ID)
+		}
+	case "workflow.fire":
+		var p firePayload
+		if dec(&p) {
+			err = st.FireSchedule(ctx, p.WorkflowID, p.Next, p.Run)
+		}
+	case "run.create":
+		var p model.WorkflowRun
+		if dec(&p) {
+			err = st.CreateRun(ctx, &p)
+		}
+	case "run.progress":
+		var p progressPayload
+		if dec(&p) {
+			err = st.ProgressRun(ctx, p.Run, p.Action)
+		}
+	case "runs.prune":
+		var p expirePayload
+		if dec(&p) {
+			err = st.PruneRuns(ctx, p.Now)
 		}
 	case "state.restore":
 		var p restorePayload

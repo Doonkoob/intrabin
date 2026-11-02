@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/intrabin/intrabin/internal/audit"
 	"github.com/intrabin/intrabin/internal/auth"
+	"github.com/intrabin/intrabin/internal/automation"
 	"github.com/intrabin/intrabin/internal/cluster"
 	"github.com/intrabin/intrabin/internal/config"
 	"github.com/intrabin/intrabin/internal/controlplane"
@@ -32,20 +33,21 @@ import (
 
 // Server holds API dependencies.
 type Server struct {
-	cfg       *config.Config
-	store     *storage.Store
-	cp        *controlplane.CP
-	cluster   *cluster.Manager
-	node      *node.Node
-	engine    *monitoring.Engine
-	prober    *monitoring.Prober
-	incidents *incidents.Manager
-	audit     *audit.Logger
-	box       *security.SecretBox
-	limiter   *auth.LoginLimiter
-	log       *slog.Logger
-	web       http.Handler
-	argon     security.Argon2Params
+	cfg        *config.Config
+	store      *storage.Store
+	cp         *controlplane.CP
+	cluster    *cluster.Manager
+	node       *node.Node
+	engine     *monitoring.Engine
+	prober     *monitoring.Prober
+	incidents  *incidents.Manager
+	automation *automation.Engine
+	audit      *audit.Logger
+	box        *security.SecretBox
+	limiter    *auth.LoginLimiter
+	log        *slog.Logger
+	web        http.Handler
+	argon      security.Argon2Params
 
 	setupMu    sync.Mutex
 	setupToken string
@@ -61,6 +63,7 @@ type Deps struct {
 	Engine     *monitoring.Engine
 	Prober     *monitoring.Prober
 	Incidents  *incidents.Manager
+	Automation *automation.Engine
 	Audit      *audit.Logger
 	SecretBox  *security.SecretBox
 	Log        *slog.Logger
@@ -70,7 +73,7 @@ type Deps struct {
 }
 
 func New(d Deps) *Server {
-	s := &Server{cfg: d.Config, store: d.Store, cp: d.CP, cluster: d.Cluster, node: d.Node, engine: d.Engine, prober: d.Prober, incidents: d.Incidents,
+	s := &Server{cfg: d.Config, store: d.Store, cp: d.CP, cluster: d.Cluster, node: d.Node, engine: d.Engine, prober: d.Prober, incidents: d.Incidents, automation: d.Automation,
 		audit: d.Audit, box: d.SecretBox, limiter: auth.NewLoginLimiter(), log: d.Log, web: d.Web, setupToken: d.SetupToken, argon: security.DefaultArgon2}
 	if s.cp == nil {
 		s.cp = controlplane.New(d.Store)
@@ -188,6 +191,18 @@ func (s *Server) Handler() http.Handler {
 		{"GET /api/v1/maintenance-windows", auth.PermView, true, s.handleListMaintenance},
 		{"POST /api/v1/maintenance-windows", auth.PermMonitorManage, true, s.handleCreateMaintenance},
 		{"DELETE /api/v1/maintenance-windows/{id}", auth.PermMonitorManage, true, s.handleDeleteMaintenance},
+
+		{"GET /api/v1/workflows", auth.PermView, true, s.handleListWorkflows},
+		{"POST /api/v1/workflows", auth.PermAutomationManage, true, s.handleCreateWorkflow},
+		{"GET /api/v1/workflows/{id}", auth.PermView, true, s.handleGetWorkflow},
+		{"PUT /api/v1/workflows/{id}", auth.PermAutomationManage, true, s.handleUpdateWorkflow},
+		{"DELETE /api/v1/workflows/{id}", auth.PermAutomationManage, true, s.handleDeleteWorkflow},
+		{"POST /api/v1/workflows/{id}/run", auth.PermAutomationRun, true, s.handleRunWorkflow},
+		{"GET /api/v1/workflow-runs", auth.PermView, true, s.handleListRuns},
+		{"GET /api/v1/workflow-runs/{id}", auth.PermView, true, s.handleGetRun},
+		{"POST /api/v1/workflow-runs/{id}/cancel", auth.PermAutomationRun, true, s.handleCancelRun},
+		{"POST /api/v1/workflow-actions/{id}/reconcile", auth.PermAutomationManage, true, s.handleReconcileAction},
+		{"GET /api/v1/automation/status", auth.PermView, true, s.handleAutomationStatus},
 
 		{"GET /api/v1/audit-logs", auth.PermAuditView, true, s.handleListAudit},
 		{"GET /api/v1/settings", auth.PermView, true, s.handleGetSettings},

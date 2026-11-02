@@ -86,14 +86,13 @@ func (m *Manager) Init(ctx context.Context, advertise string) error {
 		return err
 	}
 	newBox, _ := security.NewSecretBox(dataKey)
-	// Re-encrypt existing monitor secrets from the node master key to the cluster data key.
-	if err := m.opt.Store.ReplaceSecretBlobs(ctx, func(id string, blob []byte) ([]byte, error) {
-		aad := []byte("monitor:" + id)
-		pt, err := m.opt.DataBox.Open(blob, aad)
+	// Re-encrypt existing monitor and workflow secrets from the node master key to the cluster data key.
+	if err := m.opt.Store.ReplaceSecretBlobs(ctx, func(aad string, blob []byte) ([]byte, error) {
+		pt, err := m.opt.DataBox.Open(blob, []byte(aad))
 		if err != nil {
-			return nil, fmt.Errorf("re-encrypt monitor %s: %w", id, err)
+			return nil, fmt.Errorf("re-encrypt %s: %w", aad, err)
 		}
-		return newBox.Seal(pt, aad)
+		return newBox.Seal(pt, []byte(aad))
 	}); err != nil {
 		return err
 	}

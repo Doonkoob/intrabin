@@ -43,5 +43,35 @@ services:
       retries: 3
       start_period: 15s
 
+  # Optional isolated Action Runner for workflow script steps:
+  #   docker compose --profile automation up -d
+  # and set INTRABIN_RUNNER_URL=http://runner:8090 and INTRABIN_RUNNER_TOKEN in .env.
+  runner:
+    profiles: [automation]
+    image: ${INTRABIN_RUNNER_IMAGE:-intrabin/runner:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    restart: unless-stopped
+    environment:
+      INTRABIN_RUNNER_TOKEN: ${INTRABIN_RUNNER_TOKEN:-}  # required (>= 24 chars); the runner refuses to start without it
+      INTRABIN_LOG_LEVEL: ${INTRABIN_LOG_LEVEL:-info}
+    # No published ports: only the intrabin service reaches it on the Compose network.
+    volumes:
+      - runner-data:/var/lib/intrabin-runner
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768m
+
 volumes:
   intrabin-data:
+  runner-data:

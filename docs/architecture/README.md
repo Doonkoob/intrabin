@@ -123,6 +123,20 @@ persisted with an event row (actor, timestamp, reason). One open incident per mo
 Sizing: 1 node = no HA; 2 voters tolerate 0 failures; 3 voters tolerate 1; 5 voters tolerate 2.
 Three voters is the recommended HA deployment. Operations guide: [docs/operations/cluster.md](../operations/cluster.md).
 
+## 6a. Automation (Phase 3, implemented — see ADR-0009 and docs/operations/automation.md)
+* Workflows, runs (with a step snapshot), durable wait timers and per-dispatch **action records** are
+  replicated control-plane state. `internal/automation.Engine` runs only on the active controller; it
+  is kicked by commits (`run.create`, `workflow.*`, `state.restore`), role changes and a 1 s ticker.
+* Triggers: incident transitions (`incidents.Manager.OnTransition`, deduplicated by a unique
+  `(workflow_id, trigger_ref)` index), schedules (`workflow.fire` advances `next_fire_at` and creates the
+  run in one command) and manual runs.
+* External steps follow the fencing protocol: `Fence` (leader + `VerifyLeader` + mesh gate, term) →
+  commit `dispatching(term, leader)` → `Fence` again → dispatch with the action ID → commit outcome and
+  next run state together. Records left `dispatching` are reconciled by the next leader from the
+  runner's durable per-action record, or marked UNKNOWN_OUTCOME — never re-dispatched.
+* Scripts execute in `intrabin runner` (separate container, token auth, rlimit wrapper `runner-exec`,
+  process-group kill, output cap, durable results and `started` markers keyed by action ID).
+
 ## 6. Security model (summary — see docs/security/threat-model.md)
 
 Argon2id password hashing; random 256-bit session tokens stored hashed; HttpOnly SameSite cookies;

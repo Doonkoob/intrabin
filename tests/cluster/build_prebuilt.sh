@@ -9,3 +9,5 @@ trap 'rm -rf "$CTX"' EXIT
 mkdir -p "$CTX/data"
 cp "$ROOT/tests/cluster/Dockerfile.prebuilt" "$CTX/Dockerfile"
 docker build -t "${INTRABIN_IMAGE:-intrabin/intrabin:latest}" "$CTX"
+cp "$ROOT/tests/cluster/Dockerfile.runner.prebuilt" "$CTX/Dockerfile"
+docker build --build-arg RUNTIME_BASE="${RUNTIME_BASE:-python:3.13-slim-bookworm}" -t "${INTRABIN_RUNNER_IMAGE:-intrabin/runner:latest}" "$CTX"

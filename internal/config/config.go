@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -38,6 +39,22 @@ type Config struct {
 	ClusterInit      bool   // found a cluster on first start if not clustered (automation)
 	JoinToken        string // join a cluster on first start (automation)
 	JoinDataAction   string // "", "export" or "discard" for nodes that already hold data
+
+	// Automation (Phase 3)
+	RunnerURL   string // Action Runner used by this node when it is the active controller
+	RunnerToken string
+}
+
+// secretEnv reads K, or the contents of the file named by K_FILE.
+func secretEnv(k string) (string, error) {
+	if f := os.Getenv(k + "_FILE"); f != "" {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return "", fmt.Errorf("%s_FILE: %w", k, err)
+		}
+		return strings.TrimSpace(string(b)), nil
+	}
+	return os.Getenv(k), nil
 }
 
 func env(k, def string) string {
@@ -73,6 +90,20 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("INTRABIN_CLUSTER_INIT: %w", err)
 		}
 		c.ClusterInit = b
+	}
+	c.RunnerURL = os.Getenv("INTRABIN_RUNNER_URL")
+	var terr error
+	if c.RunnerToken, terr = secretEnv("INTRABIN_RUNNER_TOKEN"); terr != nil {
+		return nil, terr
+	}
+	if c.RunnerURL != "" {
+		u, err := url.Parse(c.RunnerURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return nil, fmt.Errorf("INTRABIN_RUNNER_URL must be an http(s) URL")
+		}
+		if len(c.RunnerToken) < 24 {
+			return nil, fmt.Errorf("INTRABIN_RUNNER_TOKEN (or INTRABIN_RUNNER_TOKEN_FILE) must be set to at least 24 characters when INTRABIN_RUNNER_URL is set")
+		}
 	}
 	switch c.JoinDataAction {
 	case "", "export", "discard":

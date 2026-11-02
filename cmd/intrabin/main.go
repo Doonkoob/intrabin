@@ -18,12 +18,14 @@ import (
 
 	"github.com/intrabin/intrabin/internal/api"
 	"github.com/intrabin/intrabin/internal/audit"
+	"github.com/intrabin/intrabin/internal/automation"
 	"github.com/intrabin/intrabin/internal/cluster"
 	"github.com/intrabin/intrabin/internal/config"
 	"github.com/intrabin/intrabin/internal/controlplane"
 	"github.com/intrabin/intrabin/internal/incidents"
 	"github.com/intrabin/intrabin/internal/monitoring"
 	"github.com/intrabin/intrabin/internal/node"
+	"github.com/intrabin/intrabin/internal/runner"
 	"github.com/intrabin/intrabin/internal/security"
 	"github.com/intrabin/intrabin/internal/storage"
 	"github.com/intrabin/intrabin/internal/web"
@@ -41,9 +43,13 @@ func main() {
 			os.Exit(resetPassword(os.Args[2:]))
 		case "backup":
 			os.Exit(backup(os.Args[2:]))
+		case "runner":
+			os.Exit(runRunner())
+		case "runner-exec":
+			os.Exit(runner.ExecWrapper(os.Args[2:]))
 		case "serve":
 		default:
-			fmt.Fprintf(os.Stderr, "usage: intrabin [serve|healthcheck|version|reset-password|backup]\n")
+			fmt.Fprintf(os.Stderr, "usage: intrabin [serve|runner|healthcheck|version|reset-password|backup]\n")
 			os.Exit(2)
 		}
 	}
@@ -108,11 +114,21 @@ func serve() error {
 		Location: cfg.NodeLocation, Store: store, CP: cp, DataBox: box, MasterBox: masterBox, Node: n, Log: log})
 	engine := &monitoring.Engine{Store: store, CP: cp, Prober: prober, Incidents: incMgr, Log: log, NodeID: n.Identity.ID, Decrypt: api.DecryptMonitor(box),
 		IsEvaluator: n.CanManage, Workers: cfg.ProbeWorkers, Retention: retention(store), ResultSink: clusterMgr.ResultSink(), Location: clusterMgr.LocationOf}
+	var runnerClient automation.Runner
+	if cfg.RunnerURL != "" {
+		runnerClient = &automation.RunnerClient{URL: cfg.RunnerURL, Token: cfg.RunnerToken}
+	}
+	auto := &automation.Engine{Store: store, CP: cp, Incidents: incMgr, Fence: clusterMgr.Fence, Active: n.CanManage, Box: box, Runner: runnerClient, Log: log.With("component", "automation")}
+	incMgr.OnTransition(auto.OnIncidentTransition)
 	cp.X.OnApplied(func(op string) {
 		if op == "state.restore" || (strings.HasPrefix(op, "monitor.") && op != "monitor.round" && op != "monitor.state") {
 			engine.Reload()
 		}
+		if op == "state.restore" || strings.HasPrefix(op, "workflow.") || op == "run.create" {
+			auto.Kick()
+		}
 	})
+	clusterMgr.OnRoleChange(func(node.Role) { auto.Kick() })
 	if err := clusterMgr.Resume(ctx); err != nil {
 		return fmt.Errorf("resume cluster: %w", err)
 	}
@@ -129,9 +145,10 @@ func serve() error {
 		log.Warn("initial setup required: open the web UI and enter this one-time setup token", "setup_token", setupToken)
 	}
 	srv := api.New(api.Deps{Config: cfg, Store: store, CP: cp, Cluster: clusterMgr, Node: n, Engine: engine, Prober: prober, Incidents: incMgr, Audit: auditLog,
-		SecretBox: box, Log: log, Web: web.Handler(), SetupToken: setupToken})
+		SecretBox: box, Log: log, Web: web.Handler(), SetupToken: setupToken, Automation: auto})
 
 	go engine.Run(ctx)
+	go auto.Run(ctx)
 	go housekeeping(ctx, cp, n, log)
 	go autoCluster(ctx, cfg, clusterMgr, log)
 
@@ -187,6 +204,9 @@ func housekeeping(ctx context.Context, cp *controlplane.CP, n *node.Node, log *s
 			}
 			if err := cp.DeleteExpiredSessions(ctx, time.Now().UTC(), 12*time.Hour); err != nil {
 				log.Error("session cleanup", "err", err)
+			}
+			if err := cp.PruneRuns(ctx, time.Now().UTC().Add(-90*24*time.Hour)); err != nil {
+				log.Error("workflow run cleanup", "err", err)
 			}
 		}
 	}
@@ -343,4 +363,67 @@ func backup(args []string) int {
 	}
 	fmt.Println("backup written to", *out, "- also back up master.key (or INTRABIN_MASTER_KEY) separately")
 	return 0
+}
+
+// runRunner starts the isolated Action Runner (`intrabin runner`). It is meant to run as its own
+// container or service account, separate from the API/control-plane process.
+func runRunner() int {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fatal:", err)
+		return 1
+	}
+	log := newLogger(cfg).With("component", "runner")
+	tok, err := runnerToken()
+	if err != nil {
+		log.Error("runner token", "err", err)
+		return 1
+	}
+	maxTimeout := 10 * time.Minute
+	if v := os.Getenv("INTRABIN_RUNNER_MAX_TIMEOUT"); v != "" {
+		if maxTimeout, err = time.ParseDuration(v); err != nil {
+			log.Error("INTRABIN_RUNNER_MAX_TIMEOUT", "err", err)
+			return 1
+		}
+	}
+	srv, err := runner.New(runner.Config{Token: tok, WorkDir: os.Getenv("INTRABIN_RUNNER_WORKDIR"), MaxTimeout: maxTimeout, Log: log})
+	if err != nil {
+		log.Error("runner", "err", err)
+		return 1
+	}
+	listen := os.Getenv("INTRABIN_RUNNER_LISTEN")
+	if listen == "" {
+		listen = ":8090"
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	hs := &http.Server{Addr: listen, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
+	go func() {
+		<-ctx.Done()
+		sh, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = hs.Shutdown(sh)
+	}()
+	log.Info("action runner listening", "addr", listen, "tls", cfg.TLSCert != "")
+	if cfg.TLSCert != "" {
+		err = hs.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
+	} else {
+		err = hs.ListenAndServe()
+	}
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Error("runner stopped", "err", err)
+		return 1
+	}
+	return 0
+}
+
+func runnerToken() (string, error) {
+	if f := os.Getenv("INTRABIN_RUNNER_TOKEN_FILE"); f != "" {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(b)), nil
+	}
+	return os.Getenv("INTRABIN_RUNNER_TOKEN"), nil
 }

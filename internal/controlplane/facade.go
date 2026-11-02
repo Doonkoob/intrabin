@@ -175,3 +175,40 @@ type IncidentStore struct {
 func (s IncidentStore) SaveIncident(ctx context.Context, in *model.Incident, events ...*model.IncidentEvent) error {
 	return s.CP.SaveIncident(ctx, in, events...)
 }
+
+func (c *CP) CreateWorkflow(ctx context.Context, w *model.Workflow) error {
+	_, err := c.apply(ctx, "workflow.create", workflowWire{Workflow: *w, SecretBlob: w.SecretBlob})
+	return err
+}
+
+func (c *CP) UpdateWorkflow(ctx context.Context, w *model.Workflow) error {
+	_, err := c.apply(ctx, "workflow.update", workflowWire{Workflow: *w, SecretBlob: w.SecretBlob})
+	return err
+}
+
+func (c *CP) DeleteWorkflow(ctx context.Context, id string) error {
+	_, err := c.apply(ctx, "workflow.delete", idPayload{ID: id})
+	return err
+}
+
+// FireSchedule advances a schedule and creates its run in one replicated step.
+func (c *CP) FireSchedule(ctx context.Context, workflowID string, next time.Time, r *model.WorkflowRun) error {
+	_, err := c.apply(ctx, "workflow.fire", firePayload{WorkflowID: workflowID, Next: next, Run: r})
+	return err
+}
+
+func (c *CP) CreateRun(ctx context.Context, r *model.WorkflowRun) error {
+	_, err := c.apply(ctx, "run.create", r)
+	return err
+}
+
+// ProgressRun records an action and/or the run's new state atomically.
+func (c *CP) ProgressRun(ctx context.Context, r *model.WorkflowRun, a *model.WorkflowAction) error {
+	_, err := c.apply(ctx, "run.progress", progressPayload{Run: r, Action: a})
+	return err
+}
+
+func (c *CP) PruneRuns(ctx context.Context, before time.Time) error {
+	_, err := c.apply(ctx, "runs.prune", expirePayload{Now: before})
+	return err
+}

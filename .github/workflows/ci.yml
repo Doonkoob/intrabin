@@ -47,3 +47,5 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - name: Build multi-arch image
         run: docker buildx build --platform linux/amd64,linux/arm64 -t intrabin/intrabin:ci .
+      - name: Build multi-arch Action Runner image
+        run: docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.runner -t intrabin/runner:ci .

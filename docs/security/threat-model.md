@@ -1,4 +1,4 @@
-# Threat model (Phases 1–2)
+# Threat model (Phases 1–3)
 
 ## Assets
 * Administrative control of monitors, users and (later) infrastructure automations.
@@ -25,13 +25,16 @@
 | Privilege escalation | RBAC checked server-side on every route; admins cannot create/modify owners; self-demotion and last-owner removal blocked. |
 | Secret disclosure | Secrets write-only in API; AES-256-GCM with per-record AAD; sensitive HTTP headers auto-moved to encrypted storage; URL credentials rejected; log/error redaction; internal errors return only a request ID. |
 | Data tampering via API input | Strict JSON decoding (unknown fields rejected, 1 MiB limit), field validation, parameterised SQL only. |
-| Abuse of probes (SSRF) | Monitors are admin-defined and intentionally reach private networks; only `monitor.manage` holders can create them or use the test endpoint, and every test is audited. Webhook/HTTP **actions** (Phase 3) will add SSRF controls with explicit private-network approval. |
+| Abuse of probes (SSRF) | Monitors are admin-defined and intentionally reach private networks; only `monitor.manage` holders can create them or use the test endpoint, and every test is audited. Workflow HTTP **actions** check every resolved address at connect time: private, loopback, link-local and CGNAT ranges need an explicit per-step `allow_private_network`; metadata, multicast and unspecified addresses are always refused; proxies ignored, redirects not followed. |
 | Container escape / host impact | Distroless static image, non-root UID 65532, read-only root FS, all capabilities dropped, no-new-privileges, memory limit. No Docker socket. |
 | Rogue node joins the cluster | Joining needs a single-use, expiring, revocable token (only its SHA-256 is stored, consumption is a replicated, deterministic operation). New members are non-voters until an admin promotes them. Join attempts are rate limited and logged. |
 | Man-in-the-middle during join | The token carries the cluster CA's SHA-256 fingerprint; the joining node refuses servers whose certificate does not chain to that CA. |
 | Peer impersonation after join | All Raft and peer-API traffic requires TLS 1.3 client certificates signed by the cluster CA; peer-API calls additionally require the certificate's node ID to be a current member. A follower may only submit results under its own node ID and may only forward session/audit operations. |
 | Secret exposure between nodes | Secrets are replicated encrypted with the cluster data key. The data key is sent to a joining node wrapped with an ephemeral X25519 exchange inside the pinned TLS channel and stored sealed with that node's master key. Plaintext secrets and master keys never leave a node. |
 | Split brain | Raft majority commit for every write; additionally the leader acts only while it has fresh two-way reachability with a majority of voters (mesh gate); otherwise it reports NO_QUORUM and stops evaluating and accepting changes. Voters are never removed automatically. |
+| Arbitrary code execution via workflows | Only `automation.manage` (admin/owner) can define scripts; operators can only run workflows explicitly marked for them. Scripts run in a separate Action Runner container (non-root, read-only FS, no capabilities, no Docker socket, no database/master key), with rlimits, timeouts with process-group kill, output caps and a minimal environment (no `LD_*`, `PATH`, `HOME` overrides). The runner API requires a ≥ 24-char bearer token compared in constant time. Every change and run is audited. |
+| Duplicate or split-brain external actions | Actions are dispatched only after a Raft-committed dispatch record and a fresh fence (leader term + `VerifyLeader` + mesh gate) before and after that commit. Uncertain outcomes become UNKNOWN_OUTCOME and are never retried automatically; the runner deduplicates by action ID and refuses to re-run interrupted actions. Automatic triggers are opt-in. |
+| Workflow secret disclosure | Encrypted with the cluster data key (AAD per workflow), write-only in the API, redacted from stored output and errors. Note: a script can still print or exfiltrate a secret it receives in a transformed form; only trusted admins can write scripts. |
 | Loss of master key | Documented backup procedure; secrets become undecryptable (monitors report `invalid_config`) rather than failing silently. |
 
 ## Known limitations
@@ -41,4 +44,7 @@
 * `skip_tls_verify` is available per monitor (off by default, labelled unsafe).
 * Node certificates are valid for one year; there is no CRL or automated renewal yet. A removed node's
   certificate is still CA-signed, so the cluster port must stay on a private network.
+* The Action Runner API is plain HTTP unless `INTRABIN_TLS_CERT/KEY` are set on the runner; keep it on a
+  private network (the Compose files do not publish it).
+* Scripts have the runner container's network access; restrict egress at the network level if needed.
 * Forwarded session writes carry the follower's timestamp (bounded to ±1 min skew by the leader).

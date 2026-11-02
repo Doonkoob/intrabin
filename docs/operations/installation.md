@@ -17,6 +17,7 @@ Open `http://127.0.0.1:8080`, paste the setup token, create the owner account.
 | Port | Purpose | Default exposure |
 |---|---|---|
 | 8080/tcp | Web UI + API (+ `/metrics` with auth) | `127.0.0.1` only |
+| 8090/tcp | Action Runner API (separate `runner` container, optional; see [automation.md](automation.md)) | not published; reached over the Compose network |
 | 7443/tcp | Cluster port: Raft + peer API with mutual TLS (only used after creating or joining a cluster; see [cluster.md](cluster.md)) | not published by the single-node Compose file |
 
 To expose Intrabin, put a TLS reverse proxy in front (recommended) and set

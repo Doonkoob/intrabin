@@ -1,12 +1,12 @@
 # Intrabin
 
-Self-hosted, open-source **uptime monitoring, incident detection and (upcoming) recovery automation**.
+Self-hosted, open-source **uptime monitoring, incident detection and recovery automation**.
 One Go binary with an embedded React UI, embedded SQLite storage, Persian/English (RTL/LTR) and
 light/dark themes. Every installation runs the same software; nodes can form a Raft cluster for
 multi-location monitoring with automatic leader failover.
 
-> Status: **Phases 1 (standalone) and 2 (clustering) are functional.** Automation, DNS providers and
-> disaster-recovery workflows are designed but not implemented yet — see
+> Status: **Phases 1 (standalone), 2 (clustering) and 3 (automation) are functional.** DNS providers
+> and disaster-recovery workflows are not implemented yet — see
 > [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 
 ## Features available now
@@ -23,6 +23,11 @@ multi-location monitoring with automatic leader failover.
   to voters; Raft (hashicorp/raft) replicates the control plane, peers use mutual TLS, followers ship
   probe results to the leader, a mesh safety gate and NO_QUORUM mode prevent split-brain actions.
   See [docs/operations/cluster.md](docs/operations/cluster.md).
+* **Automation**: workflows triggered by incident status changes, schedules or by hand, with Bash/Python
+  script steps in an isolated Action Runner container, HTTP/webhook steps with SSRF protection, durable
+  waits and incident status updates. Every external action is fenced by the leader term; an action whose
+  outcome is uncertain after a failover is never repeated but marked UNKNOWN_OUTCOME for reconciliation.
+  Workflows are disabled until enabled. See [docs/operations/automation.md](docs/operations/automation.md).
 * Prometheus metrics, structured JSON logs, health/readiness endpoints, OpenAPI spec at `/api/v1/openapi.yaml`.
 
 ## Quick start (Docker Compose)
