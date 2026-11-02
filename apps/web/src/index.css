@@ -1,0 +1,94 @@
+@import "tailwindcss";
+@import "@fontsource/vazirmatn/400.css";
+@import "@fontsource/vazirmatn/500.css";
+@import "@fontsource/vazirmatn/600.css";
+@import "@fontsource/vazirmatn/700.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f1f3f6;
+  --border: #e3e6eb;
+  --text: #111827;
+  --muted: #5b6474;
+  --accent: #0f766e;
+  --accent-fg: #ffffff;
+  --accent-soft: #e6f4f2;
+  --up: #15803d;
+  --up-soft: #e8f6ec;
+  --down: #c62828;
+  --down-soft: #fdecec;
+  --warn: #b45309;
+  --warn-soft: #fdf3e3;
+  --info: #1d4ed8;
+  --info-soft: #e9effd;
+  --neutral-soft: #eef0f3;
+  --focus: #2563eb;
+}
+.dark {
+  --bg: #0d1117;
+  --surface: #151b23;
+  --surface-2: #1c232d;
+  --border: #2a333f;
+  --text: #e6e9ee;
+  --muted: #9aa4b2;
+  --accent: #2dd4bf;
+  --accent-fg: #062b27;
+  --accent-soft: #10302d;
+  --up: #4ade80;
+  --up-soft: #12301d;
+  --down: #f87171;
+  --down-soft: #3a1717;
+  --warn: #fbbf24;
+  --warn-soft: #3a2a0d;
+  --info: #93b4fd;
+  --info-soft: #172443;
+  --neutral-soft: #222a35;
+  --focus: #93b4fd;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-fg: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-up: var(--up);
+  --color-up-soft: var(--up-soft);
+  --color-down: var(--down);
+  --color-down-soft: var(--down-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-neutral-soft: var(--neutral-soft);
+  --color-focus: var(--focus);
+}
+
+html {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Vazirmatn", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+html[lang="fa"] {
+  font-family: "Vazirmatn", ui-sans-serif, system-ui, sans-serif;
+}
+body { min-height: 100vh; }
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.tabular { font-variant-numeric: tabular-nums; }
+.ltr { direction: ltr; unicode-bidi: isolate; }
+dialog::backdrop { background: rgb(0 0 0 / 0.45); }
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

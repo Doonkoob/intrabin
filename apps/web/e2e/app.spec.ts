@@ -1,0 +1,152 @@
+import { expect, test, type Page } from '@playwright/test'
+
+const owner = { username: 'owner', password: 'correct-horse-battery' }
+const target = process.env.E2E_TARGET ?? 'http://127.0.0.1:18080/api/v1/health'
+
+async function login(page: Page) {
+  await page.goto('/login')
+  await page.getByLabel(/username|نام کاربری/i).fill(owner.username)
+  await page.getByLabel(/^password$|گذرواژه/i).fill(owner.password)
+  await page.getByRole('button', { name: /sign in|ورود/i }).click()
+  await expect(page.getByRole('heading', { name: /overview|نمای کلی/i })).toBeVisible()
+}
+
+test.describe.serial('Intrabin UI', () => {
+  test('initial setup requires token and creates owner', async ({ page }) => {
+    await page.goto('/')
+    await expect(page.getByRole('heading', { name: 'Set up Intrabin' })).toBeVisible()
+    await page.getByLabel('Setup token').fill('wrong-token-000000000')
+    await page.getByLabel('Username').fill(owner.username)
+    await page.getByLabel('Password').fill(owner.password)
+    await page.getByRole('button', { name: 'Create owner account' }).click()
+    await expect(page.getByText(/Invalid setup token/)).toBeVisible()
+    await page.getByLabel('Setup token').fill('e2e-setup-token-0123456789')
+    await page.getByRole('button', { name: 'Create owner account' }).click()
+    await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
+    await expect(page.getByTestId('node-role')).toHaveText(/STANDALONE/)
+  })
+
+  test('login and logout', async ({ page }) => {
+    await page.goto('/login')
+    await page.getByLabel('Username').fill(owner.username)
+    await page.getByLabel('Password').fill('not-the-password')
+    await page.getByRole('button', { name: 'Sign in' }).click()
+    await expect(page.getByText('Invalid username or password.')).toBeVisible()
+    await login(page)
+    await page.getByRole('button', { name: 'Sign out' }).click()
+    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+  })
+
+  test('language switching applies RTL layout', async ({ page }) => {
+    await login(page)
+    await expect(page.locator('html')).toHaveAttribute('dir', 'ltr')
+    await page.getByTestId('lang-toggle').click()
+    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl')
+    await expect(page.locator('html')).toHaveAttribute('lang', 'fa')
+    await expect(page.getByRole('heading', { name: 'نمای کلی' })).toBeVisible()
+    // Sidebar is on the right in RTL.
+    const aside = page.locator('aside').first()
+    const box = await aside.boundingBox()
+    expect(box!.x).toBeGreaterThan(1000)
+    await page.screenshot({ path: 'test-results/screens/overview-fa.png', fullPage: true })
+    await page.getByTestId('lang-toggle').click()
+    await expect(page.locator('html')).toHaveAttribute('dir', 'ltr')
+    expect((await aside.boundingBox())!.x).toBeLessThan(10)
+  })
+
+  test('theme switching', async ({ page }) => {
+    await login(page)
+    const html = page.locator('html')
+    // system → light → dark
+    await page.getByTestId('theme-toggle').click()
+    await expect(html).toHaveAttribute('data-theme', 'light')
+    await page.getByTestId('theme-toggle').click()
+    await expect(html).toHaveAttribute('data-theme', 'dark')
+    await expect(html).toHaveClass(/dark/)
+    const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
+    expect(bg).not.toBe('rgb(246, 247, 249)')
+    await page.reload()
+    await expect(html).toHaveAttribute('data-theme', 'dark')
+  })
+
+  test('create monitor with 30 s interval, test it and view details', async ({ page }) => {
+    await login(page)
+    await page.getByRole('link', { name: 'Monitors' }).first().click()
+    await page.getByRole('button', { name: 'New monitor' }).click()
+    await page.getByLabel('Name', { exact: true }).fill('Intrabin self check')
+    await page.getByLabel('URL', { exact: true }).fill(target)
+    await page.getByLabel('Check interval (seconds)').fill('30')
+    await page.getByLabel('Timeout (seconds)').fill('5')
+    await expect(page.getByTestId('policy-summary')).toContainText('3 failed rounds')
+    await page.getByTestId('test-monitor').click()
+    await expect(page.getByTestId('test-result')).toContainText('Check succeeded')
+    await page.getByTestId('save-monitor').click()
+    await expect(page.getByRole('heading', { name: /Intrabin self check/ })).toBeVisible()
+    await expect(page.getByTestId('uptime-periods')).toBeVisible()
+    // The first probe runs within the round; wait for a real result to appear.
+    await expect(page.getByTestId('recent-checks').locator('tr').first()).toBeVisible({ timeout: 45_000 })
+    await expect(page.getByTestId('recent-checks')).toContainText('200')
+    await page.screenshot({ path: 'test-results/screens/monitor-detail.png', fullPage: true })
+  })
+
+  test('validation errors are shown inline', async ({ page }) => {
+    await login(page)
+    await page.goto('/monitors/new')
+    await page.getByLabel('URL', { exact: true }).fill('ftp://nope')
+    await page.getByLabel('Check interval (seconds)').fill('5')
+    await page.getByTestId('save-monitor').click()
+    await expect(page.getByText('Enter a full URL starting with http:// or https://.')).toBeVisible()
+    await expect(page.getByText(/Must be between 10 and 86400 seconds/)).toBeVisible()
+  })
+
+  test('users: create viewer who cannot manage monitors', async ({ page, browser }) => {
+    await login(page)
+    await page.getByRole('link', { name: 'Users & roles' }).click()
+    await page.getByRole('button', { name: 'New user' }).click()
+    const dlg = page.getByRole('dialog')
+    await dlg.getByLabel('Username').fill('viewer1')
+    await dlg.getByLabel('Password').fill('viewer-password-1')
+    await dlg.getByRole('button', { name: 'Create' }).click()
+    await expect(page.getByRole('cell', { name: /viewer1/ })).toBeVisible()
+    const ctx = await browser.newContext()
+    const vp = await ctx.newPage()
+    await vp.goto('/login')
+    await vp.getByLabel('Username').fill('viewer1')
+    await vp.getByLabel('Password').fill('viewer-password-1')
+    await vp.getByRole('button', { name: 'Sign in' }).click()
+    await expect(vp.getByRole('heading', { name: 'Overview' })).toBeVisible()
+    await expect(vp.getByRole('button', { name: 'New monitor' })).toHaveCount(0)
+    await expect(vp.getByRole('link', { name: 'Users & roles' })).toHaveCount(0)
+    await ctx.close()
+  })
+
+  test('groups, maintenance, audit and cluster pages', async ({ page }) => {
+    await login(page)
+    await page.getByRole('link', { name: 'Monitor groups' }).click()
+    await page.getByRole('button', { name: 'New group' }).click()
+    await page.getByRole('dialog').getByLabel('Name', { exact: true }).fill('Production')
+    await page.getByRole('dialog').getByRole('button', { name: 'Save' }).click()
+    await expect(page.getByRole('cell', { name: 'Production' })).toBeVisible()
+    await page.getByRole('link', { name: 'Maintenance' }).click()
+    await page.getByRole('button', { name: 'Schedule maintenance' }).click()
+    await page.getByRole('dialog').getByLabel('Title', { exact: true }).fill('DB upgrade')
+    await page.getByRole('dialog').getByRole('button', { name: 'Save' }).click()
+    await expect(page.getByRole('cell', { name: 'DB upgrade' })).toBeVisible()
+    await page.getByRole('link', { name: 'Activity & audit' }).click()
+    await expect(page.getByText('monitor.create')).toBeVisible()
+    await page.getByRole('link', { name: 'Cluster / Nodes' }).click()
+    await expect(page.getByText('Mode: Standalone')).toBeVisible()
+  })
+
+  test('responsive layout on a phone', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await login(page)
+    await expect(page.locator('aside').first()).toBeHidden()
+    await page.getByTestId('menu-button').click()
+    await page.getByRole('link', { name: 'Monitors' }).last().click()
+    await expect(page.getByRole('heading', { name: 'Monitors' })).toBeVisible()
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)
+    expect(overflow).toBe(false)
+    await page.screenshot({ path: 'test-results/screens/mobile-monitors.png', fullPage: true })
+  })
+})

@@ -7,7 +7,7 @@ Intrabin must be trivial to self-host, must run identically on every node, and m
 microservice sprawl. The node runtime (probes, consensus, scheduling) is concurrency-heavy.
 
 ## Decision
-* Backend in **Go** (1.24), standard library `net/http` with method-aware `ServeMux` routing.
+* Backend in **Go** (1.26), standard library `net/http` with method-aware `ServeMux` routing.
 * Frontend in **React + TypeScript + Tailwind CSS**, built with **Vite** into static assets and
   embedded in the binary with `go:embed`.
 * Next.js was evaluated and rejected for now: we need no SSR, and a static Vite SPA served by the

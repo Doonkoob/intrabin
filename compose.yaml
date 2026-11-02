@@ -1,0 +1,47 @@
+# Intrabin — single-node production deployment.
+#   cp .env.example .env && docker compose up -d
+#   docker compose logs intrabin | grep setup_token
+name: intrabin
+
+services:
+  intrabin:
+    image: ${INTRABIN_IMAGE:-intrabin/intrabin:latest}
+    build:
+      context: .
+      args:
+        VERSION: ${INTRABIN_VERSION:-dev}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      INTRABIN_DATA_DIR: /var/lib/intrabin
+      INTRABIN_LISTEN: ":8080"
+    ports:
+      # Bound to localhost by default. Put a TLS reverse proxy in front, or change the
+      # bind address only together with INTRABIN_TLS_CERT/KEY and a firewall.
+      - "${INTRABIN_BIND:-127.0.0.1}:${INTRABIN_PORT:-8080}:8080"
+    volumes:
+      - intrabin-data:/var/lib/intrabin
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/intrabin", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  intrabin-data:

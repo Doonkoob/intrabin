@@ -1,0 +1,11 @@
+.git
+bin
+data
+**/node_modules
+apps/web/test-results
+apps/web/playwright-report
+internal/web/dist/assets
+internal/web/dist/index.html
+*.db
+master.key
+.env
