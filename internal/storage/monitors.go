@@ -303,6 +303,7 @@ func (s *Store) ReplaceSecretBlobs(ctx context.Context, fn func(aad string, blob
 	for _, t := range []struct{ table, col, prefix, suffix string }{
 		{"monitors", "secret_settings", "monitor:", ""},
 		{"workflows", "secret_env", "workflow:", ":secrets"},
+		{"dns_providers", "credentials", "dnsprovider:", ""},
 	} {
 		rows, err := tx.QueryContext(ctx, `SELECT id, `+t.col+` FROM `+t.table+` WHERE `+t.col+` IS NOT NULL AND length(`+t.col+`) > 0`)
 		if err != nil {

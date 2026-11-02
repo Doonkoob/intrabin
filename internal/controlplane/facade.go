@@ -212,3 +212,33 @@ func (c *CP) PruneRuns(ctx context.Context, before time.Time) error {
 	_, err := c.apply(ctx, "runs.prune", expirePayload{Now: before})
 	return err
 }
+
+func (c *CP) CreateDNSProvider(ctx context.Context, p *model.DNSProvider) error {
+	_, err := c.apply(ctx, "dnsprovider.create", dnsProviderWire{DNSProvider: *p, CredentialBlob: p.CredentialBlob})
+	return err
+}
+
+func (c *CP) UpdateDNSProvider(ctx context.Context, p *model.DNSProvider) error {
+	_, err := c.apply(ctx, "dnsprovider.update", dnsProviderWire{DNSProvider: *p, CredentialBlob: p.CredentialBlob})
+	return err
+}
+
+func (c *CP) DeleteDNSProvider(ctx context.Context, id string) error {
+	_, err := c.apply(ctx, "dnsprovider.delete", idPayload{ID: id})
+	return err
+}
+
+func (c *CP) SaveDNSSnapshot(ctx context.Context, s *model.DNSSnapshot) error {
+	_, err := c.apply(ctx, "dnssnapshot.save", s)
+	return err
+}
+
+func (c *CP) SaveDNSChange(ctx context.Context, ch *model.DNSChange) error {
+	_, err := c.apply(ctx, "dnschange.save", ch)
+	return err
+}
+
+func (c *CP) PruneDNSSnapshots(ctx context.Context, before time.Time, keep int) error {
+	_, err := c.apply(ctx, "dnssnapshots.prune", dnsPrunePayload{Before: before, Keep: keep})
+	return err
+}

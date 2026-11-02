@@ -16,15 +16,16 @@ const (
 	PermClusterManage    Permission = "cluster.manage"    // join/remove/promote nodes (Phase 2)
 	PermAutomationManage Permission = "automation.manage" // Phase 3
 	PermAutomationRun    Permission = "automation.run"    // Phase 3 (operators: explicitly permitted workflows)
+	PermDNSManage        Permission = "dns.manage"        // Phase 4: DNS integrations and record changes
 )
 
 var rolePerms = map[model.Role][]Permission{
 	model.RoleViewer:   {PermView},
 	model.RoleOperator: {PermView, PermIncidentRespond, PermAutomationRun},
 	model.RoleAdmin: {PermView, PermIncidentRespond, PermAutomationRun, PermMonitorManage, PermUserManage,
-		PermSettingsManage, PermAuditView, PermClusterManage, PermAutomationManage},
+		PermSettingsManage, PermAuditView, PermClusterManage, PermAutomationManage, PermDNSManage},
 	model.RoleOwner: {PermView, PermIncidentRespond, PermAutomationRun, PermMonitorManage, PermUserManage,
-		PermSettingsManage, PermAuditView, PermClusterManage, PermAutomationManage},
+		PermSettingsManage, PermAuditView, PermClusterManage, PermAutomationManage, PermDNSManage},
 }
 
 // Can reports whether role has permission p.

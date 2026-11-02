@@ -36,6 +36,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/intrabin/intrabin/internal/controlplane"
+	"github.com/intrabin/intrabin/internal/dns"
 	"github.com/intrabin/intrabin/internal/incidents"
 	"github.com/intrabin/intrabin/internal/model"
 	"github.com/intrabin/intrabin/internal/runner"
@@ -55,6 +56,7 @@ type Engine struct {
 	Active    func() bool
 	Box       *security.SecretBox
 	Runner    Runner // nil when no runner is configured
+	DNS       *dns.Service
 	Log       *slog.Logger
 	Interval  time.Duration
 	// HTTPClient overrides the SSRF-guarded client (tests only).
@@ -241,7 +243,7 @@ func (e *Engine) step(ctx context.Context, run *model.WorkflowRun) bool {
 		return e.save(ctx, run, nil) && run.Status == model.RunRunning
 	case "incident_status":
 		return e.incidentStep(ctx, run, st)
-	case "script", "http":
+	case "script", "http", "dns":
 		return e.external(ctx, run, st)
 	default:
 		return e.finish(ctx, run, st, nil, outcome{status: model.ActionFailed, err: "unknown step type " + st.Type})
@@ -350,9 +352,12 @@ func (e *Engine) external(ctx context.Context, run *model.WorkflowRun, st model.
 		return e.finish(ctx, run, st, a, outcome{status: model.ActionFailed, err: "cannot decrypt workflow secrets"})
 	}
 	var o outcome
-	if st.Type == "script" {
+	switch st.Type {
+	case "script":
 		o = e.dispatchScript(ctx, run, st, a, secrets)
-	} else {
+	case "dns":
+		o = e.dispatchDNS(ctx, run, st, a, secrets)
+	default:
 		o = e.dispatchHTTP(ctx, run, st, secrets)
 	}
 	if ctx.Err() != nil {
@@ -569,6 +574,9 @@ func (e *Engine) reconcile(ctx context.Context, run *model.WorkflowRun, a *model
 	unknown := func(msg string) bool {
 		e.Log.Warn("automation: action outcome unknown", "run_id", run.ID, "action_id", a.ID, "reason", msg)
 		return e.finish(ctx, run, st, a, outcome{status: model.ActionUnknownOutcome, err: msg, by: "engine"})
+	}
+	if a.StepType == "dns" {
+		return e.reconcileDNS(ctx, run, st, a, unknown)
 	}
 	if a.StepType != "script" {
 		return unknown("leadership changed before the result of this " + a.StepType + " action was recorded; it may or may not have been executed.")
@@ -807,3 +815,95 @@ func truncate(s string, n int) string {
 
 // IsActive reports whether this node currently executes workflow runs.
 func (e *Engine) IsActive() bool { e.init(); return e.Active() }
+
+// ---- DNS steps ----
+
+// DNSRequest builds the change request for a DNS step (templates expanded).
+func DNSRequest(run *model.WorkflowRun, st model.WorkflowStep, secrets map[string]string) dns.ChangeRequest {
+	zone := st.ZoneID
+	if zone == "" {
+		zone = st.ZoneName
+	}
+	return dns.ChangeRequest{ProviderID: st.ProviderID, Zone: zone, Action: st.DNSAction, Source: "workflow:" + run.WorkflowID,
+		Record: dns.RecordInput{Type: st.RecordType, Name: expand(st.RecordName, run, secrets), Content: expand(st.Content, run, secrets), TTL: st.TTL, Proxied: st.Proxied}}
+}
+
+func (e *Engine) dispatchDNS(ctx context.Context, run *model.WorkflowRun, st model.WorkflowStep, a *model.WorkflowAction, secrets map[string]string) outcome {
+	if e.DNS == nil {
+		return outcome{status: model.ActionFailed, err: "DNS integrations are not available on this node"}
+	}
+	req := DNSRequest(run, st, secrets)
+	req.ExpectID = a.ID // the change record shares the action ID, so the next leader can find it
+	ch, err := e.DNS.Apply(ctx, req, nil, "workflow:"+run.WorkflowID)
+	switch {
+	case errors.Is(err, dns.ErrNoChange):
+		return outcome{status: model.ActionSucceeded, output: "The record already had the requested value; nothing was changed."}
+	case err != nil && ch == nil:
+		return outcome{status: model.ActionFailed, err: dns.SafeError(err)}
+	}
+	return dnsOutcome(ch, false)
+}
+
+func describeChange(ch *model.DNSChange) string {
+	s := fmt.Sprintf("%s %s %s in %s", ch.Action, ch.RecordType, ch.RecordName, ch.ZoneName)
+	if ch.Before != nil && ch.After != nil {
+		s += fmt.Sprintf(": %s → %s", ch.Before.Content, ch.After.Content)
+	} else if ch.After != nil {
+		s += ": " + ch.After.Content
+	}
+	return s + " (change " + ch.ID + ", snapshot " + ch.SnapshotID + ")"
+}
+
+func dnsOutcome(ch *model.DNSChange, byLeader bool) outcome {
+	o := outcome{output: describeChange(ch), err: ch.Error}
+	switch ch.Status {
+	case model.DNSChangeApplied, model.DNSChangeReconciledApplied:
+		o.status = model.ActionSucceeded
+		if byLeader {
+			o.status, o.by = model.ActionReconciledSucceeded, "provider"
+		}
+		if ch.Verified {
+			o.output += "\nVerified by reading the record back."
+		}
+	case model.DNSChangeFailed, model.DNSChangeReconciledNotApplied:
+		o.status = model.ActionFailed // definitely not applied, so the step's retries apply
+		if byLeader {
+			o.by = "provider"
+		}
+		if o.err == "" {
+			o.err = "the change was not applied"
+		}
+	case model.DNSChangeDispatching:
+		o.status = model.ActionUnknownOutcome
+		o.err = "the provider state could not be read to establish the outcome"
+	default:
+		o.status = model.ActionUnknownOutcome
+		if o.err == "" {
+			o.err = "the DNS provider did not confirm the change and reading the zone back was inconclusive"
+		}
+	}
+	return o
+}
+
+func (e *Engine) reconcileDNS(ctx context.Context, run *model.WorkflowRun, st model.WorkflowStep, a *model.WorkflowAction, unknown func(string) bool) bool {
+	if e.DNS == nil {
+		return unknown("DNS integrations are not available on the current leader, so the outcome cannot be checked.")
+	}
+	ch, found, err := e.DNS.ResolveChange(ctx, a.ID)
+	switch {
+	case err != nil:
+		if time.Since(a.StartedAt) > reconcileAfter {
+			return unknown("the DNS provider could not be reached to establish the outcome.")
+		}
+		return false
+	case !found:
+		// No change record was committed, so the provider was never called: safe to retry.
+		return e.finish(ctx, run, st, a, outcome{status: model.ActionFailed, err: notDispatched, by: "engine"})
+	case ch.Status == model.DNSChangeDispatching:
+		if time.Since(a.StartedAt) > reconcileAfter {
+			return unknown("the DNS provider could not be read to establish the outcome.")
+		}
+		return false
+	}
+	return e.finish(ctx, run, st, a, dnsOutcome(ch, true))
+}

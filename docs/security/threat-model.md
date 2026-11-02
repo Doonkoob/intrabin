@@ -1,4 +1,4 @@
-# Threat model (Phases 1–3)
+# Threat model (Phases 1–4)
 
 ## Assets
 * Administrative control of monitors, users and (later) infrastructure automations.
@@ -35,6 +35,8 @@
 | Arbitrary code execution via workflows | Only `automation.manage` (admin/owner) can define scripts; operators can only run workflows explicitly marked for them. Scripts run in a separate Action Runner container (non-root, read-only FS, no capabilities, no Docker socket, no database/master key), with rlimits, timeouts with process-group kill, output caps and a minimal environment (no `LD_*`, `PATH`, `HOME` overrides). The runner API requires a ≥ 24-char bearer token compared in constant time. Every change and run is audited. |
 | Duplicate or split-brain external actions | Actions are dispatched only after a Raft-committed dispatch record and a fresh fence (leader term + `VerifyLeader` + mesh gate) before and after that commit. Uncertain outcomes become UNKNOWN_OUTCOME and are never retried automatically; the runner deduplicates by action ID and refuses to re-run interrupted actions. Automatic triggers are opt-in. |
 | Workflow secret disclosure | Encrypted with the cluster data key (AAD per workflow), write-only in the API, redacted from stored output and errors. Note: a script can still print or exfiltrate a secret it receives in a transformed form; only trusted admins can write scripts. |
+| DNS credential disclosure | Verified then sealed with the cluster data key (AAD per integration), replicated encrypted, write-only in the API, never logged; provider errors are sanitised before they are stored or shown. Least-privilege tokens recommended (Cloudflare Zone:Read + DNS:Edit on selected zones). The test-only API base overrides are logged as warnings at startup. |
+| Harmful or duplicated DNS changes | `dns.manage` (admin/owner) only; preview required before apply; conflict check against the reviewed plan; snapshot before every write; fenced like other external actions; writes never retried; uncertain outcomes settled by reading the zone back, never by re-sending; revert and snapshot restore; every change audited with actor, fence and snapshot. |
 | Loss of master key | Documented backup procedure; secrets become undecryptable (monitors report `invalid_config`) rather than failing silently. |
 
 ## Known limitations

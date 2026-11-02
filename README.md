@@ -5,8 +5,8 @@ One Go binary with an embedded React UI, embedded SQLite storage, Persian/Englis
 light/dark themes. Every installation runs the same software; nodes can form a Raft cluster for
 multi-location monitoring with automatic leader failover.
 
-> Status: **Phases 1 (standalone), 2 (clustering) and 3 (automation) are functional.** DNS providers
-> and disaster-recovery workflows are not implemented yet — see
+> Status: **Phases 1 (standalone), 2 (clustering), 3 (automation) and 4 (DNS) are functional.**
+> Disaster-recovery workflows are not implemented yet — see
 > [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 
 ## Features available now
@@ -28,6 +28,10 @@ multi-location monitoring with automatic leader failover.
   waits and incident status updates. Every external action is fenced by the leader term; an action whose
   outcome is uncertain after a failover is never repeated but marked UNKNOWN_OUTCOME for reconciliation.
   Workflows are disabled until enabled. See [docs/operations/automation.md](docs/operations/automation.md).
+* **DNS**: Cloudflare and ArvanCloud integrations with write-only encrypted credentials; preview every
+  record change, snapshot before writing, conflict check, read-back verification, revert and snapshot
+  restore; a DNS step for workflows. A change is written at most once; uncertain outcomes are settled
+  by reading the zone back. See [docs/operations/dns.md](docs/operations/dns.md).
 * Prometheus metrics, structured JSON logs, health/readiness endpoints, OpenAPI spec at `/api/v1/openapi.yaml`.
 
 ## Quick start (Docker Compose)
@@ -59,6 +63,7 @@ internal/api/          HTTP API, middleware, OpenAPI spec
 internal/auth/         RBAC, login throttling
 internal/cluster/      Raft, mTLS transport, CA/enrollment, mesh gate, result shipping
 internal/controlplane/ replicated write path (commands executed locally or via Raft)
+internal/dns/          Cloudflare and ArvanCloud clients, safe-change service, test fake (dnsmock)
 internal/audit/        audit logger
 internal/config/       environment configuration
 internal/incidents/    incident state machine and manager
@@ -73,6 +78,7 @@ apps/web/              React + TypeScript + Tailwind UI, Playwright tests
 docs/                  architecture, ADRs, security, operations
 tests/smoke/           Docker Compose smoke test
 tests/cluster/         cluster e2e test (local processes or 3-node Compose)
+tests/dnsmock/         fake DNS provider server for UI tests and demos
 ```
 
 ## License

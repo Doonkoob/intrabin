@@ -253,3 +253,101 @@ test.describe.serial('Automation', () => {
     }
   })
 })
+
+const dnsMock = `http://127.0.0.1:${process.env.E2E_DNSMOCK_PORT ?? 18096}`
+
+test.describe.serial('DNS', () => {
+  test.beforeAll(async ({ request }) => {
+    await request.post(`${dnsMock}/_mock/reset`)
+    await request.post(`${dnsMock}/_mock/zones`, {
+      data: {
+        provider: 'cloudflare', name: 'example.com', records: [
+          { Type: 'A', Name: 'www', Content: '192.0.2.10', TTL: 300, Proxied: true },
+          { Type: 'A', Name: 'app', Content: '192.0.2.20', TTL: 60, Proxied: false },
+          { Type: 'MX', Name: '@', Content: 'mail.example.com', TTL: 3600, Proxied: false },
+        ],
+      },
+    })
+  })
+
+  test('add an integration, preview and apply a record change, then revert it', async ({ page, request }) => {
+    await login(page)
+    await page.getByRole('link', { name: 'DNS', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'DNS', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Add integration' }).click()
+    await page.getByLabel('Name', { exact: true }).fill('Cloudflare prod')
+    await page.getByLabel('API token').fill('wrong-token')
+    await page.getByTestId('save-provider').click()
+    await expect(page.getByRole('dialog')).toContainText('rejected the credentials')
+    await page.getByLabel('API token').fill('e2e-cf-token')
+    await page.getByTestId('save-provider').click()
+    await expect(page.getByTestId('dns-provider-row')).toContainText('Cloudflare prod')
+    await expect(page.locator('body')).not.toContainText('e2e-cf-token')
+
+    await page.getByRole('link', { name: 'Cloudflare prod' }).click()
+    await expect(page.getByTestId('dns-record-row')).toHaveCount(3)
+    await expect(page.getByTestId('dns-record-row').filter({ hasText: 'MX' })).toContainText('Read-only')
+    await page.getByRole('button', { name: 'Edit www.example.com' }).click()
+    await page.getByLabel('Value').fill('198.51.100.7')
+    await page.getByTestId('dns-preview').click()
+    const plan = page.getByTestId('dns-plan')
+    await expect(plan).toContainText('The record will be updated')
+    await expect(plan).toContainText('192.0.2.10')
+    await expect(plan).toContainText('198.51.100.7')
+    let state = await (await request.get(`${dnsMock}/_mock/state`)).json()
+    expect(state.writes['cloudflare PUT'] ?? 0).toBe(0) // a preview never writes
+    await page.screenshot({ path: 'test-results/screens/dns-plan.png', fullPage: true })
+    await page.getByTestId('dns-apply').click()
+    await expect(page.getByTestId('dns-result')).toContainText('Applied')
+    await expect(page.getByTestId('dns-result')).toContainText('Verified by reading back')
+    await page.getByRole('button', { name: 'Close' }).last().click()
+    await expect(page.getByTestId('dns-record-row').filter({ hasText: 'www.example.com' })).toContainText('198.51.100.7')
+
+    await page.goto('/dns?tab=changes')
+    await expect(page.getByTestId('dns-change-row')).toHaveCount(1)
+    await page.getByTestId('dns-change-row').first().click()
+    await page.getByTestId('dns-revert-preview').click()
+    await expect(page.getByTestId('dns-plan')).toContainText('192.0.2.10')
+    await page.getByTestId('dns-revert-apply').click()
+    await expect(page.getByTestId('dns-result')).toContainText('Applied')
+    await page.getByRole('button', { name: 'Close' }).last().click()
+    await expect(page.getByTestId('dns-change-row')).toHaveCount(2)
+    state = await (await request.get(`${dnsMock}/_mock/state`)).json()
+    expect(state.writes['cloudflare PUT']).toBe(2)
+
+    await page.goto('/dns?tab=snapshots')
+    await expect(page.getByTestId('dns-snapshot-row')).toHaveCount(2)
+    await page.getByTestId('lang-toggle').click()
+    await expect(page.getByRole('heading', { name: 'DNS', exact: true })).toBeVisible()
+    await expect(page.getByText('تصاویر لحظه‌ای').first()).toBeVisible()
+    await page.screenshot({ path: 'test-results/screens/dns-snapshots-fa.png', fullPage: true })
+    await page.getByTestId('lang-toggle').click()
+  })
+
+  test('a workflow DNS step whose response is lost is settled by reading the zone back', async ({ page, request }) => {
+    await login(page)
+    await page.goto('/automation/new')
+    await page.getByLabel('Name', { exact: true }).first().fill('Fail over app')
+    await page.getByTestId('add-step').selectOption('dns')
+    await page.getByTestId('step-editor').first().getByRole('button', { name: 'Delete' }).click()
+    const step = page.getByTestId('step-editor').first()
+    await step.getByLabel('DNS integration').selectOption({ label: 'Cloudflare prod' })
+    await step.getByLabel('Zone').fill('example.com')
+    await step.getByLabel('Record name').fill('app.example.com')
+    await step.getByLabel('Value').fill('203.0.113.50')
+    await page.getByTestId('save-workflow').click()
+    await expect(page.getByRole('heading', { name: /Fail over app/ })).toBeVisible()
+    // The provider applies the change but the response is a 502: the outcome is uncertain.
+    await request.post(`${dnsMock}/_mock/faults`, { data: { provider: 'cloudflare', method: 'PUT', status: 502, apply_first: true } })
+    const before = (await (await request.get(`${dnsMock}/_mock/state`)).json()).writes['cloudflare PUT'] ?? 0
+    await page.getByRole('button', { name: 'Run now' }).click()
+    await page.getByTestId('confirm-run').click()
+    await expect(page.locator('h1 [data-status="succeeded"]')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByTestId('action').first()).toContainText('192.0.2.20 → 203.0.113.50')
+    const after = (await (await request.get(`${dnsMock}/_mock/state`)).json()).writes['cloudflare PUT']
+    expect(after - before).toBe(1) // never sent twice
+    await page.screenshot({ path: 'test-results/screens/dns-workflow-run.png', fullPage: true })
+    await page.goto('/dns?tab=changes')
+    await expect(page.getByTestId('dns-change-row').first()).toContainText('Applied (reconciled)')
+  })
+})

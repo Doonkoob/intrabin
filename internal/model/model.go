@@ -401,6 +401,16 @@ type WorkflowStep struct {
 	// incident_status
 	Status IncidentStatus `json:"status,omitempty"`
 	Note   string         `json:"note,omitempty"`
+	// dns
+	ProviderID string `json:"provider_id,omitempty"`
+	ZoneID     string `json:"zone_id,omitempty"`
+	ZoneName   string `json:"zone_name,omitempty"`
+	DNSAction  string `json:"dns_action,omitempty"` // upsert | delete
+	RecordType string `json:"record_type,omitempty"`
+	RecordName string `json:"record_name,omitempty"`
+	Content    string `json:"content,omitempty"`
+	TTL        int    `json:"ttl,omitempty"`
+	Proxied    bool   `json:"proxied,omitempty"`
 }
 
 // Workflow is an automation definition.
@@ -480,4 +490,74 @@ type WorkflowAction struct {
 	Output       string     `json:"output"`
 	Error        string     `json:"error"`
 	ReconciledBy string     `json:"reconciled_by,omitempty"`
+}
+
+// DNSProvider is a configured DNS provider account. Credentials are write-only.
+type DNSProvider struct {
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	Type           string     `json:"type"` // cloudflare | arvancloud
+	CredentialBlob []byte     `json:"-"`
+	CreatedBy      string     `json:"created_by"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	LastVerifiedAt *time.Time `json:"last_verified_at,omitempty"`
+	LastError      string     `json:"last_error"`
+}
+
+// DNSRecord is a stored copy of a provider record (snapshots and change history).
+type DNSRecord struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
+	TTL     int    `json:"ttl"`
+	Proxied bool   `json:"proxied"`
+}
+
+// DNSSnapshot is the state of a zone's records at a point in time.
+type DNSSnapshot struct {
+	ID          string      `json:"id"`
+	ProviderID  string      `json:"provider_id"`
+	ZoneID      string      `json:"zone_id"`
+	ZoneName    string      `json:"zone_name"`
+	Reason      string      `json:"reason"`
+	Records     []DNSRecord `json:"records,omitempty"`
+	RecordCount int         `json:"record_count"`
+	CreatedBy   string      `json:"created_by"`
+	CreatedAt   time.Time   `json:"created_at"`
+}
+
+// DNS change statuses.
+const (
+	DNSChangeDispatching          = "dispatching"
+	DNSChangeApplied              = "applied"
+	DNSChangeFailed               = "failed"
+	DNSChangeUnknown              = "unknown_outcome"
+	DNSChangeReconciledApplied    = "reconciled_applied"
+	DNSChangeReconciledNotApplied = "reconciled_not_applied"
+)
+
+// DNSChange is the durable record of one record change (also its fencing record).
+type DNSChange struct {
+	ID          string     `json:"id"`
+	ProviderID  string     `json:"provider_id"`
+	ZoneID      string     `json:"zone_id"`
+	ZoneName    string     `json:"zone_name"`
+	Action      string     `json:"action"` // create | update | delete
+	RecordType  string     `json:"record_type"`
+	RecordName  string     `json:"record_name"`
+	RecordID    string     `json:"record_id"`
+	Before      *DNSRecord `json:"before,omitempty"`
+	After       *DNSRecord `json:"after,omitempty"`
+	Status      string     `json:"status"`
+	Verified    bool       `json:"verified"`
+	SnapshotID  string     `json:"snapshot_id"`
+	Source      string     `json:"source"`
+	FenceTerm   uint64     `json:"fence_term"`
+	FenceLeader string     `json:"fence_leader"`
+	Actor       string     `json:"actor"`
+	Error       string     `json:"error"`
+	CreatedAt   time.Time  `json:"created_at"`
+	FinishedAt  *time.Time `json:"finished_at,omitempty"`
 }

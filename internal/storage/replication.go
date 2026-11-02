@@ -51,6 +51,9 @@ var replicatedTables = []tableSpec{
 	{name: "workflows"},
 	{name: "workflow_runs"},
 	{name: "workflow_actions"},
+	{name: "dns_providers"},
+	{name: "dns_snapshots"},
+	{name: "dns_changes"},
 	{name: "round_results", merge: true, where: func(now time.Time) (string, []any) {
 		return "round_start >= ?", []any{ms(now.Add(-48 * time.Hour))}
 	}},

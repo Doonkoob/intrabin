@@ -6,7 +6,7 @@ import { usePrefs, useSession } from '../app'
 import { useApi } from '../hooks'
 import { fmtDateTime, fmtDuration } from '../format'
 import { Button, Card, Checkbox, ConfirmDialog, Dialog, Empty, ErrorBanner, Field, IncidentBadge, Input, PageHeader, Segmented, Select, Spinner, Table, Textarea, td, th } from '../components/ui'
-import type { ActionStatus, AutomationStatus, IncidentStatus, Monitor, RunStatus, Workflow, WorkflowAction, WorkflowRun, WorkflowStep, WorkflowTrigger } from '../types'
+import type { ActionStatus, AutomationStatus, DNSProvider, IncidentStatus, Monitor, RunStatus, Workflow, WorkflowAction, WorkflowRun, WorkflowStep, WorkflowTrigger } from '../types'
 import type { Key } from '../i18n'
 
 const runStyle: Record<string, string> = {
@@ -337,6 +337,7 @@ function newStep(type: WorkflowStep['type'], n: number): WorkflowStep {
     case 'http': return { name: `Step ${n}`, type, method: 'POST', url: 'https://', headers: {}, body: '', expected_status: ['2xx'], timeout_seconds: 30, on_failure: 'stop', retries: 0 }
     case 'wait': return { name: `Step ${n}`, type, seconds: 60 }
     case 'incident_status': return { name: `Step ${n}`, type, status: 'RECOVERING', note: '', on_failure: 'stop' }
+    case 'dns': return { name: `Step ${n}`, type, provider_id: '', zone_name: '', dns_action: 'upsert', record_type: 'A', record_name: '', content: '', ttl: 60, proxied: false, on_failure: 'stop', retries: 0 }
   }
 }
 
@@ -385,12 +386,13 @@ export function WorkflowFormPage() {
   const navigate = useNavigate()
   const existing = useApi<{ workflow: Workflow }>(editing ? `/workflows/${id}` : null)
   const monitors = useApi<{ monitors: (Monitor & { state?: unknown })[] }>('/monitors')
+  const dnsProviders = useApi<{ providers: DNSProvider[] }>('/dns/providers')
   if (editing && existing.loading && !existing.data) return <Spinner />
   if (editing && existing.error) return <ErrorBanner error={existing.error} onRetry={existing.reload} />
-  return <WorkflowForm key={existing.data?.workflow.id ?? 'new'} initial={existing.data?.workflow} monitors={monitors.data?.monitors ?? []} onSaved={(w) => navigate(`/automation/${w.id}`)} onCancel={() => navigate(editing ? `/automation/${id}` : '/automation')} title={editing ? t('wf.edit') : t('wf.new')} />
+  return <WorkflowForm key={existing.data?.workflow.id ?? 'new'} initial={existing.data?.workflow} monitors={monitors.data?.monitors ?? []} dnsProviders={dnsProviders.data?.providers ?? []} onSaved={(w) => navigate(`/automation/${w.id}`)} onCancel={() => navigate(editing ? `/automation/${id}` : '/automation')} title={editing ? t('wf.edit') : t('wf.new')} />
 }
 
-function WorkflowForm({ initial, monitors, onSaved, onCancel, title }: { initial?: Workflow; monitors: Monitor[]; onSaved: (w: Workflow) => void; onCancel: () => void; title: string }) {
+function WorkflowForm({ initial, monitors, dnsProviders, onSaved, onCancel, title }: { initial?: Workflow; monitors: Monitor[]; dnsProviders: DNSProvider[]; onSaved: (w: Workflow) => void; onCancel: () => void; title: string }) {
   const { t } = usePrefs()
   const [name, setName] = useState(initial?.name ?? '')
   const [description, setDescription] = useState(initial?.description ?? '')
@@ -480,7 +482,7 @@ function WorkflowForm({ initial, monitors, onSaved, onCancel, title }: { initial
         <Card title={t('wf.steps')} actions={
           <Select aria-label={t('wf.addStep')} value="" onChange={(e) => { if (e.target.value) setSteps([...steps, toDraft(newStep(e.target.value as WorkflowStep['type'], steps.length + 1))]) }} className="h-8 w-auto" data-testid="add-step">
             <option value="">{t('wf.addStep')}</option>
-            {(['script', 'http', 'wait', 'incident_status'] as const).map((x) => <option key={x} value={x}>{t(`wf.stepType.${x}` as Key)}</option>)}
+            {(['script', 'http', 'wait', 'incident_status', 'dns'] as const).map((x) => <option key={x} value={x}>{t(`wf.stepType.${x}` as Key)}</option>)}
           </Select>}>
           {f.steps && <p className="mb-3 text-xs text-down">{f.steps}</p>}
           <ol className="flex flex-col gap-4">
@@ -506,6 +508,9 @@ function WorkflowForm({ initial, monitors, onSaved, onCancel, title }: { initial
                           <option value="stop">{t('wf.onFailure.stop')}</option><option value="continue">{t('wf.onFailure.continue')}</option>
                         </Select>
                       </Field>
+                    )}
+                    {s.type === 'dns' && (
+                      <Field label={t('wf.retries')} htmlFor={`${sid}-rt`} error={k('retries')}><Input id={`${sid}-rt`} type="number" min={0} max={5} value={s.retries ?? 0} onChange={(e) => upd(i, { retries: Number(e.target.value) })} /></Field>
                     )}
                     {(s.type === 'script' || s.type === 'http') && (
                       <div className="grid grid-cols-2 gap-3">
@@ -546,6 +551,39 @@ function WorkflowForm({ initial, monitors, onSaved, onCancel, title }: { initial
                   )}
                   {s.type === 'wait' && (
                     <div className="mt-3 md:w-64"><Field label={t('wf.waitSeconds')} htmlFor={`${sid}-sec`} error={k('seconds')}><Input id={`${sid}-sec`} type="number" min={1} value={s.seconds ?? ''} onChange={(e) => upd(i, { seconds: Number(e.target.value) })} /></Field></div>
+                  )}
+                  {s.type === 'dns' && (
+                    <div className="mt-3 flex flex-col gap-3">
+                      {dnsProviders.length === 0 && <p className="rounded-lg border border-warn/40 bg-warn-soft p-2.5 text-xs text-warn">{t('wf.dns.noProviders')} <Link to="/dns" className="underline">{t('dns.title')}</Link></p>}
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <Field label={t('wf.dns.integration')} htmlFor={`${sid}-dp`} error={k('provider_id')}>
+                          <Select id={`${sid}-dp`} value={s.provider_id ?? ''} onChange={(e) => upd(i, { provider_id: e.target.value })}>
+                            <option value="">{t('wf.dns.choose')}</option>
+                            {dnsProviders.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </Select>
+                        </Field>
+                        <Field label={t('dns.zone')} htmlFor={`${sid}-zone`} error={k('zone_name')}><Input id={`${sid}-zone`} dir="ltr" placeholder="example.com" value={s.zone_name ?? ''} onChange={(e) => upd(i, { zone_name: e.target.value })} /></Field>
+                        <Field label={t('wf.dns.action')} htmlFor={`${sid}-da`} error={k('dns_action')}>
+                          <Select id={`${sid}-da`} value={s.dns_action} onChange={(e) => upd(i, { dns_action: e.target.value as 'upsert' | 'delete' })}>
+                            <option value="upsert">{t('wf.dns.upsert')}</option><option value="delete">{t('wf.dns.delete')}</option>
+                          </Select>
+                        </Field>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-[8rem_1fr_1fr_7rem]">
+                        <Field label={t('dns.recordType')} htmlFor={`${sid}-rtp`} error={k('record_type')}>
+                          <Select id={`${sid}-rtp`} value={s.record_type} onChange={(e) => upd(i, { record_type: e.target.value })}>{['A', 'AAAA', 'CNAME', 'TXT'].map((x) => <option key={x}>{x}</option>)}</Select>
+                        </Field>
+                        <Field label={t('wf.dns.recordName')} htmlFor={`${sid}-rn`} error={k('record_name')}><Input id={`${sid}-rn`} dir="ltr" placeholder="app.example.com" value={s.record_name ?? ''} onChange={(e) => upd(i, { record_name: e.target.value })} /></Field>
+                        {s.dns_action !== 'delete' && <>
+                          <Field label={t('dns.content')} htmlFor={`${sid}-rc`} error={k('content')}><Input id={`${sid}-rc`} dir="ltr" placeholder="{{dr_ip}}" value={s.content ?? ''} onChange={(e) => upd(i, { content: e.target.value })} /></Field>
+                          <Field label="TTL" htmlFor={`${sid}-ttl`} error={k('ttl')}><Input id={`${sid}-ttl`} type="number" min={1} value={s.ttl ?? 60} onChange={(e) => upd(i, { ttl: Number(e.target.value) })} /></Field>
+                        </>}
+                      </div>
+                      {s.dns_action !== 'delete' && dnsProviders.find((p) => p.id === s.provider_id)?.type === 'cloudflare' && s.record_type !== 'TXT' && (
+                        <Checkbox label={t('dns.proxied')} checked={!!s.proxied} onChange={(v) => upd(i, { proxied: v })} />
+                      )}
+                      <p className="text-xs text-muted">{t('wf.dns.help')}</p>
+                    </div>
                   )}
                   {s.type === 'incident_status' && (
                     <div className="mt-3 grid gap-3 md:grid-cols-2">

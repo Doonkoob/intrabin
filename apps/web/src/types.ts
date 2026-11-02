@@ -240,7 +240,7 @@ export interface EnrollmentToken {
   revoked_at?: string
 }
 
-export type StepType = 'script' | 'http' | 'wait' | 'incident_status'
+export type StepType = 'script' | 'http' | 'wait' | 'incident_status' | 'dns'
 
 export interface WorkflowStep {
   name: string
@@ -260,6 +260,15 @@ export interface WorkflowStep {
   seconds?: number
   status?: IncidentStatus
   note?: string
+  provider_id?: string
+  zone_id?: string
+  zone_name?: string
+  dns_action?: 'upsert' | 'delete'
+  record_type?: string
+  record_name?: string
+  content?: string
+  ttl?: number
+  proxied?: boolean
 }
 
 export interface WorkflowTrigger {
@@ -331,4 +340,88 @@ export interface AutomationStatus {
   executes_here: boolean
   runner: { configured: boolean; reachable: boolean; interpreters: Record<string, boolean> }
   runs: Record<string, number>
+}
+
+// ---- DNS (Phase 4) ----
+
+export type DNSProviderType = 'cloudflare' | 'arvancloud'
+
+export interface DNSProvider {
+  id: string
+  name: string
+  type: DNSProviderType
+  created_by: string
+  created_at: string
+  updated_at: string
+  last_verified_at?: string
+  last_error: string
+}
+
+export interface DNSZone { id: string; name: string; status?: string }
+
+export interface DNSRecord {
+  id: string
+  type: string
+  name: string
+  content: string
+  ttl: number
+  proxied: boolean
+  editable?: boolean
+}
+
+export interface DNSRecordInput { type: string; name: string; content: string; ttl: number; proxied: boolean }
+
+export interface DNSChangeRequest {
+  provider_id: string
+  zone: string
+  action: 'upsert' | 'delete' | 'create'
+  record_id?: string
+  record: DNSRecordInput
+}
+
+export interface DNSPlan {
+  provider_id: string
+  zone: DNSZone
+  action: 'create' | 'update' | 'delete'
+  before?: DNSRecord
+  after?: DNSRecord
+  no_change: boolean
+  warnings?: string[]
+}
+
+export type DNSChangeStatus = 'dispatching' | 'applied' | 'failed' | 'unknown_outcome' | 'reconciled_applied' | 'reconciled_not_applied'
+
+export interface DNSChange {
+  id: string
+  provider_id: string
+  zone_id: string
+  zone_name: string
+  action: 'create' | 'update' | 'delete'
+  record_type: string
+  record_name: string
+  record_id: string
+  before?: DNSRecord
+  after?: DNSRecord
+  status: DNSChangeStatus
+  verified: boolean
+  snapshot_id: string
+  source: string
+  fence_term: number
+  fence_leader: string
+  actor: string
+  error: string
+  created_at: string
+  finished_at?: string
+}
+
+export interface DNSSnapshot {
+  id: string
+  provider_id: string
+  zone_id: string
+  zone_name: string
+  reason: string
+  records?: DNSRecord[]
+  record_count: number
+  created_by: string
+  created_at: string
 }

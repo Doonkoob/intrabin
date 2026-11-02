@@ -137,6 +137,14 @@ Three voters is the recommended HA deployment. Operations guide: [docs/operation
 * Scripts execute in `intrabin runner` (separate container, token auth, rlimit wrapper `runner-exec`,
   process-group kill, output cap, durable results and `started` markers keyed by action ID).
 
+## 6b. DNS (Phase 4, implemented — see ADR-0010 and docs/operations/dns.md)
+`internal/dns` holds the Cloudflare (API v4) and ArvanCloud (CDN API 4.0) clients behind one `Provider`
+interface and the `Service` that performs changes: plan → snapshot → conflict check → fence → replicated
+`dispatching` change record → fence → one write → replicated outcome → read-back. Integrations, snapshots
+and change records are replicated control-plane state; credentials are sealed with the cluster data key.
+Uncertain writes are settled by reading the zone back; the leader settles changes left `dispatching` by a
+node that stopped. Workflow `dns` steps call the same service, with the action ID as the change ID.
+
 ## 6. Security model (summary — see docs/security/threat-model.md)
 
 Argon2id password hashing; random 256-bit session tokens stored hashed; HttpOnly SameSite cookies;

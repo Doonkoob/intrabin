@@ -22,6 +22,7 @@ import (
 	"github.com/intrabin/intrabin/internal/cluster"
 	"github.com/intrabin/intrabin/internal/config"
 	"github.com/intrabin/intrabin/internal/controlplane"
+	"github.com/intrabin/intrabin/internal/dns"
 	"github.com/intrabin/intrabin/internal/incidents"
 	"github.com/intrabin/intrabin/internal/monitoring"
 	"github.com/intrabin/intrabin/internal/node"
@@ -118,7 +119,11 @@ func serve() error {
 	if cfg.RunnerURL != "" {
 		runnerClient = &automation.RunnerClient{URL: cfg.RunnerURL, Token: cfg.RunnerToken}
 	}
-	auto := &automation.Engine{Store: store, CP: cp, Incidents: incMgr, Fence: clusterMgr.Fence, Active: n.CanManage, Box: box, Runner: runnerClient, Log: log.With("component", "automation")}
+	dnsSvc := &dns.Service{Store: store, CP: cp, Box: box, Fence: clusterMgr.Fence, Log: log.With("component", "dns"), APIBase: cfg.DNSAPIBase}
+	for kind, base := range cfg.DNSAPIBase {
+		log.Warn("DNS provider API base URL overridden (testing only); credentials are sent to this URL", "provider", kind, "url", base)
+	}
+	auto := &automation.Engine{Store: store, CP: cp, Incidents: incMgr, Fence: clusterMgr.Fence, Active: n.CanManage, Box: box, Runner: runnerClient, DNS: dnsSvc, Log: log.With("component", "automation")}
 	incMgr.OnTransition(auto.OnIncidentTransition)
 	cp.X.OnApplied(func(op string) {
 		if op == "state.restore" || (strings.HasPrefix(op, "monitor.") && op != "monitor.round" && op != "monitor.state") {
@@ -145,11 +150,12 @@ func serve() error {
 		log.Warn("initial setup required: open the web UI and enter this one-time setup token", "setup_token", setupToken)
 	}
 	srv := api.New(api.Deps{Config: cfg, Store: store, CP: cp, Cluster: clusterMgr, Node: n, Engine: engine, Prober: prober, Incidents: incMgr, Audit: auditLog,
-		SecretBox: box, Log: log, Web: web.Handler(), SetupToken: setupToken, Automation: auto})
+		SecretBox: box, Log: log, Web: web.Handler(), SetupToken: setupToken, Automation: auto, DNS: dnsSvc})
 
 	go engine.Run(ctx)
 	go auto.Run(ctx)
 	go housekeeping(ctx, cp, n, log)
+	go dnsReconciler(ctx, dnsSvc, n)
 	go autoCluster(ctx, cfg, clusterMgr, log)
 
 	httpSrv := &http.Server{Addr: cfg.Listen, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
@@ -207,6 +213,27 @@ func housekeeping(ctx context.Context, cp *controlplane.CP, n *node.Node, log *s
 			}
 			if err := cp.PruneRuns(ctx, time.Now().UTC().Add(-90*24*time.Hour)); err != nil {
 				log.Error("workflow run cleanup", "err", err)
+			}
+			// Keep DNS snapshots for 90 days, and always the newest 20 per zone.
+			if err := cp.PruneDNSSnapshots(ctx, time.Now().UTC().Add(-90*24*time.Hour), 20); err != nil {
+				log.Error("dns snapshot cleanup", "err", err)
+			}
+		}
+	}
+}
+
+// dnsReconciler settles DNS changes left "dispatching" by a node that stopped mid-change, by
+// reading the provider state (never by re-sending the change).
+func dnsReconciler(ctx context.Context, s *dns.Service, n *node.Node) {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if n.CanManage() {
+				s.ReconcilePending(ctx, 2*time.Minute)
 			}
 		}
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/intrabin/intrabin/internal/cluster"
 	"github.com/intrabin/intrabin/internal/config"
 	"github.com/intrabin/intrabin/internal/controlplane"
+	"github.com/intrabin/intrabin/internal/dns"
 	"github.com/intrabin/intrabin/internal/incidents"
 	"github.com/intrabin/intrabin/internal/metrics"
 	"github.com/intrabin/intrabin/internal/model"
@@ -42,6 +43,7 @@ type Server struct {
 	prober     *monitoring.Prober
 	incidents  *incidents.Manager
 	automation *automation.Engine
+	dns        *dns.Service
 	audit      *audit.Logger
 	box        *security.SecretBox
 	limiter    *auth.LoginLimiter
@@ -64,6 +66,7 @@ type Deps struct {
 	Prober     *monitoring.Prober
 	Incidents  *incidents.Manager
 	Automation *automation.Engine
+	DNS        *dns.Service
 	Audit      *audit.Logger
 	SecretBox  *security.SecretBox
 	Log        *slog.Logger
@@ -73,7 +76,7 @@ type Deps struct {
 }
 
 func New(d Deps) *Server {
-	s := &Server{cfg: d.Config, store: d.Store, cp: d.CP, cluster: d.Cluster, node: d.Node, engine: d.Engine, prober: d.Prober, incidents: d.Incidents, automation: d.Automation,
+	s := &Server{cfg: d.Config, store: d.Store, cp: d.CP, cluster: d.Cluster, node: d.Node, engine: d.Engine, prober: d.Prober, incidents: d.Incidents, automation: d.Automation, dns: d.DNS,
 		audit: d.Audit, box: d.SecretBox, limiter: auth.NewLoginLimiter(), log: d.Log, web: d.Web, setupToken: d.SetupToken, argon: security.DefaultArgon2}
 	if s.cp == nil {
 		s.cp = controlplane.New(d.Store)
@@ -203,6 +206,23 @@ func (s *Server) Handler() http.Handler {
 		{"POST /api/v1/workflow-runs/{id}/cancel", auth.PermAutomationRun, true, s.handleCancelRun},
 		{"POST /api/v1/workflow-actions/{id}/reconcile", auth.PermAutomationManage, true, s.handleReconcileAction},
 		{"GET /api/v1/automation/status", auth.PermView, true, s.handleAutomationStatus},
+		{"GET /api/v1/dns/providers", auth.PermView, false, s.handleListDNSProviders},
+		{"POST /api/v1/dns/providers", auth.PermDNSManage, true, s.handleCreateDNSProvider},
+		{"PUT /api/v1/dns/providers/{id}", auth.PermDNSManage, true, s.handleUpdateDNSProvider},
+		{"DELETE /api/v1/dns/providers/{id}", auth.PermDNSManage, true, s.handleDeleteDNSProvider},
+		{"POST /api/v1/dns/providers/{id}/verify", auth.PermDNSManage, false, s.handleVerifyDNSProvider},
+		{"GET /api/v1/dns/providers/{id}/zones", auth.PermDNSManage, false, s.handleListDNSZones},
+		{"GET /api/v1/dns/providers/{id}/zones/{zone}/records", auth.PermDNSManage, false, s.handleListDNSRecords},
+		{"POST /api/v1/dns/providers/{id}/zones/{zone}/snapshots", auth.PermDNSManage, true, s.handleCreateDNSSnapshot},
+		{"POST /api/v1/dns/changes/plan", auth.PermDNSManage, false, s.handlePlanDNSChange},
+		{"POST /api/v1/dns/changes", auth.PermDNSManage, true, s.handleApplyDNSChange},
+		{"GET /api/v1/dns/changes", auth.PermView, false, s.handleListDNSChanges},
+		{"GET /api/v1/dns/changes/{id}", auth.PermView, false, s.handleGetDNSChange},
+		{"POST /api/v1/dns/changes/{id}/revert", auth.PermDNSManage, true, s.handleRevertDNSChange},
+		{"POST /api/v1/dns/changes/{id}/reconcile", auth.PermDNSManage, true, s.handleReconcileDNSChange},
+		{"GET /api/v1/dns/snapshots", auth.PermView, false, s.handleListDNSSnapshots},
+		{"GET /api/v1/dns/snapshots/{id}", auth.PermView, false, s.handleGetDNSSnapshot},
+		{"POST /api/v1/dns/snapshots/{id}/restore", auth.PermDNSManage, true, s.handleRestoreDNSSnapshot},
 
 		{"GET /api/v1/audit-logs", auth.PermAuditView, true, s.handleListAudit},
 		{"GET /api/v1/settings", auth.PermView, true, s.handleGetSettings},

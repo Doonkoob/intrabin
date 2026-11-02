@@ -213,6 +213,16 @@ type firePayload struct {
 	Run        *model.WorkflowRun `json:"run,omitempty"`
 }
 
+type dnsProviderWire struct {
+	model.DNSProvider
+	CredentialBlob []byte `json:"credential_blob"`
+}
+
+type dnsPrunePayload struct {
+	Before time.Time `json:"before"`
+	Keep   int       `json:"keep"`
+}
+
 type restorePayload struct {
 	Dump []byte `json:"dump"`
 }
@@ -416,6 +426,37 @@ func (x *Executor) Execute(ctx context.Context, cmd *Command) error {
 		var p expirePayload
 		if dec(&p) {
 			err = st.PruneRuns(ctx, p.Now)
+		}
+	case "dnsprovider.create", "dnsprovider.update":
+		var p dnsProviderWire
+		if dec(&p) {
+			d := p.DNSProvider
+			d.CredentialBlob = p.CredentialBlob
+			if cmd.Op == "dnsprovider.create" {
+				err = st.CreateDNSProvider(ctx, &d)
+			} else {
+				err = st.UpdateDNSProvider(ctx, &d)
+			}
+		}
+	case "dnsprovider.delete":
+		var p idPayload
+		if dec(&p) {
+			err = st.DeleteDNSProvider(ctx, p.ID)
+		}
+	case "dnssnapshot.save":
+		var p model.DNSSnapshot
+		if dec(&p) {
+			err = st.SaveDNSSnapshot(ctx, &p)
+		}
+	case "dnschange.save":
+		var p model.DNSChange
+		if dec(&p) {
+			err = st.SaveDNSChange(ctx, &p)
+		}
+	case "dnssnapshots.prune":
+		var p dnsPrunePayload
+		if dec(&p) {
+			err = st.PruneDNSSnapshots(ctx, p.Before, p.Keep)
 		}
 	case "state.restore":
 		var p restorePayload

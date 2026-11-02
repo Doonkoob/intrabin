@@ -19,6 +19,8 @@ import (
 	"github.com/intrabin/intrabin/internal/cluster"
 	"github.com/intrabin/intrabin/internal/config"
 	"github.com/intrabin/intrabin/internal/controlplane"
+	"github.com/intrabin/intrabin/internal/dns"
+	"github.com/intrabin/intrabin/internal/dns/dnsmock"
 	"github.com/intrabin/intrabin/internal/incidents"
 	"github.com/intrabin/intrabin/internal/model"
 	"github.com/intrabin/intrabin/internal/monitoring"
@@ -34,6 +36,7 @@ type env struct {
 	srv   *httptest.Server
 	store *storage.Store
 	node  *node.Node
+	dns   *dnsmock.Server
 }
 
 func newEnv(t *testing.T) *env {
@@ -57,12 +60,17 @@ func newEnv(t *testing.T) *env {
 	master, _ := security.NewSecretBox(bytes.Repeat([]byte{1}, 32))
 	cp := controlplane.New(st)
 	cm := cluster.New(cluster.Options{DataDir: dir, Listen: "127.0.0.1:0", Store: st, CP: cp, DataBox: box, MasterBox: master, Node: n, Log: log})
-	auto := &automation.Engine{Store: st, CP: cp, Incidents: inc, Fence: cm.Fence, Active: n.CanManage, Box: box, Log: log, Interval: 100 * time.Millisecond}
+	mock := dnsmock.New("cf-token-123", "arvan-key-123")
+	mockSrv := httptest.NewServer(mock)
+	t.Cleanup(mockSrv.Close)
+	dnsSvc := &dns.Service{Store: st, CP: cp, Box: box, Fence: cm.Fence, Log: log, VerifyDelay: 10 * time.Millisecond,
+		APIBase: map[string]string{"cloudflare": mockSrv.URL + "/cloudflare/client/v4", "arvancloud": mockSrv.URL + "/arvan/cdn/4.0"}}
+	auto := &automation.Engine{Store: st, CP: cp, Incidents: inc, Fence: cm.Fence, Active: n.CanManage, Box: box, DNS: dnsSvc, Log: log, Interval: 100 * time.Millisecond}
 	go auto.Run(t.Context())
-	s := New(Deps{Config: cfg, Store: st, CP: cp, Cluster: cm, Node: n, Engine: eng, Prober: prober, Incidents: inc, Audit: audit.New(cp, log), SecretBox: box, Log: log, SetupToken: setupTok, Argon2: &fast, Automation: auto})
+	s := New(Deps{Config: cfg, Store: st, CP: cp, Cluster: cm, Node: n, Engine: eng, Prober: prober, Incidents: inc, Audit: audit.New(cp, log), SecretBox: box, Log: log, SetupToken: setupTok, Argon2: &fast, Automation: auto, DNS: dnsSvc})
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv, store: st, node: n}
+	return &env{t: t, srv: srv, store: st, node: n, dns: mock}
 }
 
 type client struct {

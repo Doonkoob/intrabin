@@ -21,6 +21,7 @@ test-go:
 	go test -race -count=1 ./...
 
 test-e2e: build
+	go build -o bin/dnsmock ./tests/dnsmock
 	cd apps/web && npx playwright test
 
 test-cluster: build

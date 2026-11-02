@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/intrabin/intrabin/internal/auth"
 	"github.com/intrabin/intrabin/internal/automation"
+	"github.com/intrabin/intrabin/internal/dns"
 	"github.com/intrabin/intrabin/internal/model"
 	"github.com/intrabin/intrabin/internal/storage"
 )
@@ -189,8 +190,45 @@ func (s *Server) normalizeWorkflow(r *http.Request, in *workflowInput) map[strin
 			if len(st.Note) > 1000 {
 				f[k+"note"] = "Note is too long."
 			}
+		case "dns":
+			*st = model.WorkflowStep{Name: st.Name, Type: st.Type, OnFailure: st.OnFailure, Retries: st.Retries, ProviderID: st.ProviderID,
+				ZoneID: strings.TrimSpace(st.ZoneID), ZoneName: strings.ToLower(strings.TrimSuffix(strings.TrimSpace(st.ZoneName), ".")), DNSAction: st.DNSAction,
+				RecordType: strings.ToUpper(st.RecordType), RecordName: strings.TrimSpace(st.RecordName), Content: strings.TrimSpace(st.Content), TTL: st.TTL, Proxied: st.Proxied}
+			if dp, err := s.store.GetDNSProvider(r.Context(), st.ProviderID); err != nil {
+				f[k+"provider_id"] = "Choose a DNS integration."
+			} else if dp.Type != "cloudflare" {
+				st.Proxied = false
+			}
+			if st.ZoneName == "" && st.ZoneID == "" {
+				f[k+"zone_name"] = "Choose a zone."
+			}
+			if st.DNSAction != "upsert" && st.DNSAction != "delete" {
+				f[k+"dns_action"] = "Choose create/update or delete."
+			}
+			if !slices.Contains(dns.EditableTypes, st.RecordType) {
+				f[k+"record_type"] = "Choose A, AAAA, CNAME or TXT."
+			}
+			if st.RecordName == "" || len(st.RecordName) > 253 {
+				f[k+"record_name"] = "Enter the record name."
+			}
+			if st.TTL == 0 {
+				st.TTL = 1
+			}
+			if st.DNSAction == "upsert" {
+				if st.Content == "" || len(st.Content) > 4096 {
+					f[k+"content"] = "Enter the record value."
+				} else if !placeholderRe.MatchString(st.Content+st.RecordName) && st.ZoneName != "" {
+					// Fully static: validate now so mistakes surface when saving, not during an incident.
+					in := dns.RecordInput{Type: st.RecordType, Name: st.RecordName, Content: st.Content, TTL: st.TTL, Proxied: st.Proxied}
+					if err := dns.Validate(&in, st.ZoneName); err != nil {
+						f[k+"content"] = err.Error()
+					}
+				}
+			} else {
+				st.Content, st.TTL, st.Proxied = "", 0, false
+			}
 		default:
-			f[k+"type"] = "Step type must be script, http, wait or incident_status."
+			f[k+"type"] = "Step type must be script, http, wait, incident_status or dns."
 		}
 	}
 	if len(in.Secrets) > 20 {

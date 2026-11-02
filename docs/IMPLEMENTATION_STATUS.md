@@ -9,9 +9,18 @@ _Last updated: 2026-11-02. Keep this file accurate: a feature is "done" only whe
 | 1 — Functional standalone product | **Done** (see below; verified by Go tests, Playwright UI tests and a Compose smoke test) |
 | 2 — Distributed nodes / Raft | **Done** (see below; verified by in-process 3-node tests, a 3-process e2e test and a 3-node Docker Compose failover test) |
 | 3 — Automation / workflows / runner | **Done** (see below; verified by Go unit/integration tests, an in-process failover test, Playwright and the local + Compose 3-node e2e with a leader killed mid-script) |
-| 4 — Cloudflare / ArvanCloud DNS | Not started |
+| 4 — Cloudflare / ArvanCloud DNS | **Done** (see below; verified by Go tests against a fake of both provider APIs with fault injection, and Playwright. Not run against real provider accounts, by design) |
 | 5 — Disaster-recovery workflows | Not started (incident states RECOVERY_PENDING…FAILED_OVER exist in the state machine) |
 | 6 — Hardening & release | Partial (CI workflow, docs, license) |
+
+## Completed components (Phase 4: DNS)
+* **Providers** (`internal/dns`) — Cloudflare API v4 and ArvanCloud CDN API 4.0 clients (verify, zones and records with pagination, create/update/delete); A/AAAA/CNAME/TXT editable, other types read-only; ArvanCloud extra fields preserved on update; GETs retried on 429/5xx/transport errors, writes never retried; errors classified (auth, not found, rate limited, invalid, provider, transport) and sanitised.
+* **Data model** (migration 0004) — `dns_providers` (credentials sealed with the cluster data key, AAD `dnsprovider:<id>`, write-only), `dns_snapshots`, `dns_changes` (before/after, status, fence term + leader, snapshot, source, actor). Replicated through control-plane commands; credentials re-encrypted on cluster creation.
+* **Safe changes** (`dns.Service`) — dry-run plan, unique-match or record-ID selection, conflict check against the reviewed plan, snapshot before every write, fence → `dispatching` record → fence → single write → outcome → read-back verification; uncertain outcomes settled by reading the zone (`reconciled_applied` / `reconciled_not_applied` / `unknown_outcome`); leader-side reconciler for changes left `dispatching`; manual reconcile with a note; revert; snapshot restore with dry run and opt-in deletions; snapshot retention (90 days, newest 20 per zone kept).
+* **Workflow step** `dns` — create/update or delete a record with placeholders; change ID = action ID so a new leader settles it from the provider state; a "not applied" result is a definite failure (retries apply); already-correct records succeed without a write.
+* **API** — integrations CRUD + verify, zones, records, plan, apply, history, revert, reconcile, snapshots (create/list/get/restore); `dns.manage` permission (admin/owner); OpenAPI updated (64 paths). All writes audited.
+* **UI** — DNS page (integrations, change history, snapshots), zone/record browser with add/edit/delete dialogs showing the plan before applying, change detail with revert and reconcile, snapshot viewer with restore preview; DNS step in the workflow editor. EN + FA.
+* **Test tooling** — `tests/dnsmock` fake server (both APIs, control endpoints for zones and faults), `INTRABIN_DNS_TEST_*_API` overrides (testing only, warned at startup).
 
 ## Completed components (Phase 3: automation)
 * **Data model** (migration 0003) — `workflows` (disabled by default, trigger, steps, encrypted secret env, `operator_can_run`, schedule `next_fire_at`), `workflow_runs` (step snapshot, trigger ref with a unique dedup index, context, status, current step, durable timer `next_at`), `workflow_actions` (one record per dispatch: status, fence term + leader, exit code, redacted output, reconciled_by). All replicated through control-plane commands (`workflow.create/update/delete/fire`, `run.create/progress`, `runs.prune`).
@@ -45,6 +54,14 @@ _Last updated: 2026-11-02. Keep this file accurate: a feature is "done" only whe
 * **UI** — React 19 + TS + Tailwind 4 SPA embedded in the binary: setup, login, overview dashboard, monitors list/filter, monitor create/edit with live test and policy summary, monitor details (uptime periods with coverage, 90-day bars, latency chart, rounds strip, status codes, error categories, per-node, recent checks, incidents, certificate), groups, incidents + timeline, maintenance, cluster/node page, audit log, users & roles, settings (profile, password, appearance, instance, retention). Persian RTL with Vazirmatn and Jalali dates via `Intl`, English LTR, light/dark/system themes, keyboard focus styles, responsive layout. Restricted follower view (activates when the node is not the controller).
 * **Deployment** — multi-stage Dockerfile (distroless, non-root, 7.4 MB content), Compose with read-only FS, dropped caps, localhost bind, healthcheck, log rotation; `.env.example`; Makefile.
 
+## Test results (2026-11-02, Phase 4)
+* `go vet ./...` clean; `go test -race ./...`: **78 tests passed, 0 failed**. New in Phase 4:
+  * `dns` — both providers against the fake: pagination (122 records), MX read-only, create/update/delete, ArvanCloud settings preserved, auth/404/429/5xx classification, name/value validation; service: plan/apply/verify, stale plan → conflict, no-change, revert of update and create, 400 → failed, 502 after apply → reconciled_applied, 503 without apply → reconciled_not_applied with no retry, timeout after apply → reconciled_applied, no write without a fence, idempotent change ID, leader reconciliation of `dispatching` changes, snapshot restore with and without deletions converges.
+  * `automation` — DNS step applies, verifies and is a no-op the second time; lost 502 response settled without a second write; a `dispatching` DNS action after a simulated failover is settled by the new leader from the provider state (applied → succeeded, not applied → failed) with no write.
+  * `api` — bad credentials rejected before storing, credentials never returned, zones/records, apply without plan refused, plan never writes, stale plan → 409, revert dry run + apply, history and snapshots, restore with deletions, DNS step validation, integration in use cannot be deleted.
+* Playwright (Chromium): **14/14 passed** — previous suite plus: add a Cloudflare integration (wrong token rejected), edit a record with preview (no write) and apply (verified), revert from history, snapshots page in FA; a workflow DNS step whose 502 response is lost is settled as applied with exactly one write.
+* The 3-node cluster e2e scripts were not re-run for Phase 4 (the DNS failover path is covered by the in-process reconciliation tests above).
+
 ## Test results (2026-11-02, Phase 3)
 * `go vet ./...` clean; `go test -race ./...`: **67 tests passed, 0 failed**. New in Phase 3:
   * `runner` — Bash and Python execution, exactly one execution for 5 concurrent + 1 later request with the same action ID, timeout kills background children (process group), output cap, runner environment not leaked, rlimits applied, interrupted action never re-run, HTTP API auth (401), `LD_PRELOAD` rejected, unknown action 404.
@@ -66,10 +83,11 @@ _Last updated: 2026-11-02. Keep this file accurate: a feature is "done" only whe
 * Uptime 24 h per monitor in list/overview is computed with one query per monitor (fine for hundreds, should be batched for thousands).
 * Charts keep a left-to-right time axis in RTL by design.
 * No master-key rotation command yet.
+* DNS: not exercised against real Cloudflare or ArvanCloud accounts (mocks only, as required); no compare-and-set at the providers, so the conflict check narrows but does not close the race with other editors; only A/AAAA/CNAME/TXT are editable; snapshot reasons and provider error texts are English only; zone selection in the workflow editor is a text field.
 * Automation: an incident-triggered run is created right after the incident transition commits; a crash between the two commits loses that trigger. No approval step type yet. Script output and server-side error texts are English only. Scripts have the runner container's network access (restrict egress at the network level). The runner's HTTP API is plain HTTP unless TLS is configured on it.
 
-## Next implementation steps (Phase 4: DNS providers)
-1. Provider interface (list zones/records, get, create/update/delete with optimistic checks) and a credential store per integration (encrypted with the cluster data key, write-only).
-2. Cloudflare and ArvanCloud implementations against their documented APIs, exercised only through mocks/fake servers in tests (no real accounts).
-3. Snapshot-before-change and rollback for DNS records; dry-run diff in the UI.
-4. A `dns` workflow step that goes through the same fencing/UNKNOWN_OUTCOME protocol (idempotent "ensure record = value" semantics where the provider allows checking state).
+## Next implementation steps (Phase 5: disaster-recovery workflows)
+1. DR plans built on workflows: primary/secondary targets, health-gated failover (DNS step + incident FAILED_OVER), and a guided failback with its own plan and approval.
+2. Approval step type (pause until an operator approves; durable, fenced).
+3. Split-brain protection for DR: failover only from the active controller with the mesh gate open and a quorum-confirmed incident; opt-in automatic failover per plan, manual by default.
+4. DR drill mode against the mock provider and a status view per plan.

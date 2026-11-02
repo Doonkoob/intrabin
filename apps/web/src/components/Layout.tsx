@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router'
-import { Activity, AlertOctagon, Boxes, CalendarClock, FolderTree, LayoutDashboard, LogOut, Menu, Monitor, Moon, ScrollText, Settings, Sun, SunMoon, Users, Workflow, X } from 'lucide-react'
+import { Activity, AlertOctagon, Boxes, CalendarClock, FolderTree, Globe, LayoutDashboard, LogOut, Menu, Monitor, Moon, ScrollText, Settings, Sun, SunMoon, Users, Workflow, X } from 'lucide-react'
 import { usePrefs, useSession, type Theme } from '../app'
 import { get, post } from '../api'
 import type { Key } from '../i18n'
@@ -14,6 +14,7 @@ const nav: NavItem[] = [
   { to: '/incidents', label: 'nav.incidents', icon: <AlertOctagon className="size-4" /> },
   { to: '/maintenance', label: 'nav.maintenance', icon: <CalendarClock className="size-4" /> },
   { to: '/automation', label: 'nav.automation', icon: <Workflow className="size-4" /> },
+  { to: '/dns', label: 'nav.dns', icon: <Globe className="size-4" /> },
   { to: '/cluster', label: 'nav.cluster', icon: <Boxes className="size-4" /> },
   { to: '/audit', label: 'nav.audit', icon: <ScrollText className="size-4" />, perm: 'audit.view' },
   { to: '/users', label: 'nav.users', icon: <Users className="size-4" />, perm: 'user.manage' },

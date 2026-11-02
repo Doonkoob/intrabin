@@ -23,7 +23,7 @@ components:
         error:
           type: object
           properties:
-            code: { type: string, examples: [validation_failed, unauthorized, forbidden, not_found, conflict, csrf_failed, rate_limited, node_read_only, no_quorum, workflow_busy, invalid_state, invalid_transition, internal] }
+            code: { type: string, examples: [validation_failed, unauthorized, forbidden, not_found, conflict, csrf_failed, rate_limited, node_read_only, no_quorum, workflow_busy, invalid_state, invalid_transition, dns_conflict, dns_no_change, dns_ambiguous, dns_invalid, dns_auth, dns_not_found, dns_rate_limited, dns_provider_error, dns_provider_in_use, internal] }
             message: { type: string }
             fields: { type: object, additionalProperties: { type: string } }
     WorkflowInput:
@@ -51,7 +51,7 @@ components:
             type: object
             properties:
               name: { type: string }
-              type: { type: string, enum: [script, http, wait, incident_status] }
+              type: { type: string, enum: [script, http, wait, incident_status, dns] }
               timeout_seconds: { type: integer }
               on_failure: { type: string, enum: [stop, continue] }
               retries: { type: integer, minimum: 0, maximum: 5, description: retries after a definite failure only }
@@ -67,8 +67,45 @@ components:
               seconds: { type: integer, description: wait duration }
               status: { type: string, description: incident_status target }
               note: { type: string }
+              provider_id: { type: string, description: "dns: DNS integration ID" }
+              zone_name: { type: string, description: "dns: zone name (or zone_id)" }
+              zone_id: { type: string }
+              dns_action: { type: string, enum: [upsert, delete] }
+              record_type: { type: string, enum: [A, AAAA, CNAME, TXT] }
+              record_name: { type: string, description: "dns: FQDN or name relative to the zone; placeholders allowed" }
+              content: { type: string, description: "dns: record value; placeholders allowed" }
+              ttl: { type: integer, description: "dns: 1 = automatic, otherwise 30-86400" }
+              proxied: { type: boolean, description: "dns: Cloudflare proxy" }
         secrets: { type: object, additionalProperties: { type: string }, writeOnly: true }
         clear_secrets: { type: boolean }
+    DNSRecordInput:
+      type: object
+      properties:
+        type: { type: string, enum: [A, AAAA, CNAME, TXT] }
+        name: { type: string, description: "FQDN inside the zone, a relative name, or @ for the apex" }
+        content: { type: string }
+        ttl: { type: integer, description: "1 = automatic (Cloudflare auto; ArvanCloud 120 s), otherwise 30-86400" }
+        proxied: { type: boolean, description: "Cloudflare proxy / ArvanCloud cloud flag" }
+    DNSChangeRequest:
+      type: object
+      required: [provider_id, zone, action]
+      properties:
+        provider_id: { type: string }
+        zone: { type: string, description: zone ID or name }
+        action: { type: string, enum: [upsert, delete, create] }
+        record_id: { type: string, description: "the exact record to change; otherwise matched by type + name (must be unique)" }
+        record: { $ref: '#/components/schemas/DNSRecordInput' }
+    DNSPlan:
+      type: object
+      description: Result of a dry run. Send it back unchanged when applying; the change is refused with dns_conflict if the record changed since.
+      properties:
+        provider_id: { type: string }
+        zone: { type: object, properties: { id: { type: string }, name: { type: string }, status: { type: string } } }
+        action: { type: string, enum: [create, update, delete] }
+        before: { type: object }
+        after: { type: object }
+        no_change: { type: boolean }
+        warnings: { type: array, items: { type: string } }
     Role: { type: string, enum: [owner, admin, operator, viewer] }
     User:
       type: object
@@ -370,3 +407,51 @@ paths:
       responses: { '200': { description: OK }, '409': { description: The action is not in unknown_outcome }, '422': { $ref: '#/components/responses/Error' } }
   /automation/status:
     get: { summary: "Whether this node executes runs, Action Runner reachability and interpreters, and run counts by status", responses: { '200': { description: OK } } }
+  /dns/providers:
+    get: { summary: "List DNS integrations (credentials are never returned)", responses: { '200': { description: OK } } }
+    post:
+      summary: "Add a DNS integration (dns.manage). Body: { name, type: cloudflare|arvancloud, api_token (Cloudflare) | api_key (ArvanCloud) }. Credentials are verified with the provider before they are stored encrypted."
+      responses: { '201': { description: Created }, '422': { $ref: '#/components/responses/Error' } }
+  /dns/providers/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    put: { summary: "Rename, or replace the credential (empty keeps the stored one; a new one is verified first)", responses: { '200': { description: OK } } }
+    delete: { summary: "Delete an integration (refused with dns_provider_in_use while a workflow step uses it)", responses: { '204': { description: Deleted }, '409': { $ref: '#/components/responses/Error' } } }
+  /dns/providers/{id}/verify:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post: { summary: Re-verify the stored credential, responses: { '200': { description: "{ ok, error }" } } }
+  /dns/providers/{id}/zones:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }, { name: fresh, in: query, schema: { type: string, enum: ["1"] } }]
+    get: { summary: "Zones visible to the credential (cached 30 s)", responses: { '200': { description: OK } } }
+  /dns/providers/{id}/zones/{zone}/records:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }, { name: zone, in: path, required: true, schema: { type: string } }]
+    get: { summary: "Live records of a zone (all pages). Only A, AAAA, CNAME and TXT are editable", responses: { '200': { description: OK } } }
+  /dns/providers/{id}/zones/{zone}/snapshots:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }, { name: zone, in: path, required: true, schema: { type: string } }]
+    post: { summary: Take a snapshot of the zone, responses: { '201': { description: Created } } }
+  /dns/changes/plan:
+    post:
+      summary: Dry run a change against the provider's current records (never writes)
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/DNSChangeRequest' } } } }
+      responses: { '200': { description: "{ plan: DNSPlan }" }, '422': { $ref: '#/components/responses/Error' } }
+  /dns/changes:
+    get: { summary: "Change history (filters: provider_id, zone_id, status=comma list, limit)", responses: { '200': { description: OK } } }
+    post:
+      summary: "Apply a reviewed change. Body: { change: DNSChangeRequest, plan: DNSPlan }. Snapshots the zone, checks for conflicts, fences, writes once, reads back. Uncertain outcomes are settled by reading the zone, never by re-sending."
+      responses: { '200': { description: "{ change } with status applied, failed, reconciled_applied, reconciled_not_applied or unknown_outcome" }, '409': { $ref: '#/components/responses/Error' } }
+  /dns/changes/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get: { summary: One change, responses: { '200': { description: OK } } }
+  /dns/changes/{id}/revert:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post: { summary: "Undo an applied change. Body: { dry_run: true } returns the plan; { plan } applies it", responses: { '200': { description: OK }, '409': { $ref: '#/components/responses/Error' } } }
+  /dns/changes/{id}/reconcile:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post: { summary: "Record the verified outcome of an unknown_outcome change. Body: { result: applied|not_applied, note (required) }. A workflow action with the same ID is reconciled too.", responses: { '200': { description: OK } } }
+  /dns/snapshots:
+    get: { summary: "Snapshots without records (filters: provider_id, zone_id, limit)", responses: { '200': { description: OK } } }
+  /dns/snapshots/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get: { summary: Snapshot with its records, responses: { '200': { description: OK } } }
+  /dns/snapshots/{id}/restore:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post: { summary: "Restore editable records. Body: { dry_run, include_deletes, plans }. Apply with the plans from the dry run; stops at the first change that did not definitely apply.", responses: { '200': { description: "{ changes, planned, error? }" }, '409': { $ref: '#/components/responses/Error' } } }

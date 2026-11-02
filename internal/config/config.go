@@ -43,6 +43,10 @@ type Config struct {
 	// Automation (Phase 3)
 	RunnerURL   string // Action Runner used by this node when it is the active controller
 	RunnerToken string
+
+	// DNS (Phase 4). Overrides of the provider API base URLs, for tests against a mock provider
+	// only: credentials are sent to these URLs.
+	DNSAPIBase map[string]string
 }
 
 // secretEnv reads K, or the contents of the file named by K_FILE.
@@ -103,6 +107,16 @@ func Load() (*Config, error) {
 		}
 		if len(c.RunnerToken) < 24 {
 			return nil, fmt.Errorf("INTRABIN_RUNNER_TOKEN (or INTRABIN_RUNNER_TOKEN_FILE) must be set to at least 24 characters when INTRABIN_RUNNER_URL is set")
+		}
+	}
+	c.DNSAPIBase = map[string]string{}
+	for kind, env := range map[string]string{"cloudflare": "INTRABIN_DNS_TEST_CLOUDFLARE_API", "arvancloud": "INTRABIN_DNS_TEST_ARVANCLOUD_API"} {
+		if v := os.Getenv(env); v != "" {
+			u, err := url.Parse(v)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				return nil, fmt.Errorf("%s must be an http(s) URL", env)
+			}
+			c.DNSAPIBase[kind] = strings.TrimSuffix(v, "/")
 		}
 	}
 	switch c.JoinDataAction {
