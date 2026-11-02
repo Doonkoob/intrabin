@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/intrabin/intrabin/internal/cluster"
+	"github.com/intrabin/intrabin/internal/controlplane"
 	"github.com/intrabin/intrabin/internal/storage"
 )
 
@@ -19,6 +21,8 @@ type APIError struct {
 	Code    string            `json:"code"`
 	Message string            `json:"message"`
 	Fields  map[string]string `json:"fields,omitempty"`
+	// LeaderURL points users at the node that accepts changes (cluster mode).
+	LeaderURL string `json:"leader_url,omitempty"`
 }
 
 func (e *APIError) Error() string { return e.Message }
@@ -57,6 +61,16 @@ func (s *Server) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		ae = errNotFound
 	case errors.Is(err, storage.ErrConflict):
 		ae = errConflict
+	case errors.Is(err, controlplane.ErrNotLeader):
+		ae = s.readOnlyErr(r)
+	case errors.Is(err, controlplane.ErrNoQuorum):
+		ae = &APIError{Status: http.StatusServiceUnavailable, Code: "no_quorum", Message: "The cluster has no quorum. Changes are unavailable until a majority of voters can reach each other."}
+	case errors.Is(err, cluster.ErrBadRequest):
+		ae = &APIError{Status: http.StatusBadRequest, Code: "bad_request", Message: strings.TrimPrefix(err.Error(), cluster.ErrBadRequest.Error()+": ")}
+	case errors.Is(err, cluster.ErrDataPresent):
+		ae = &APIError{Status: http.StatusConflict, Code: "data_present", Message: err.Error()}
+	case errors.Is(err, cluster.ErrAlreadyClustered), errors.Is(err, cluster.ErrNotClustered):
+		ae = &APIError{Status: http.StatusConflict, Code: "cluster_state", Message: err.Error()}
 	default:
 		// Never leak internal error details to clients.
 		s.log.Error("internal error", "path", r.URL.Path, "method", r.Method, "request_id", requestID(r.Context()), "err", err)
@@ -121,4 +135,10 @@ func parseRange(v string, def time.Duration) time.Duration {
 		return 90 * 24 * time.Hour
 	}
 	return def
+}
+
+func isKnownClusterErr(err error) bool {
+	var ae *APIError
+	return errors.As(err, &ae) || errors.Is(err, storage.ErrNotFound) || errors.Is(err, cluster.ErrBadRequest) ||
+		errors.Is(err, cluster.ErrNotClustered) || errors.Is(err, controlplane.ErrNoQuorum) || errors.Is(err, controlplane.ErrNotLeader)
 }

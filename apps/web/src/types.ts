@@ -191,3 +191,51 @@ export interface Settings {
   round_retention_days: number
   hourly_retention_days: number
 }
+
+export interface ClusterMember {
+  id: string
+  name: string
+  address: string
+  api_url: string
+  location: string
+  version: string
+  suffrage: 'voter' | 'nonvoter'
+  self: boolean
+  leader: boolean
+  reachable: boolean
+  last_seen_ms: number | null
+  applied_index: number
+  raft_state: string
+  outbox: number
+}
+
+export interface ClusterStatus {
+  enabled: boolean
+  cluster_id?: string
+  node_id: string
+  role: NodeInfo['role']
+  raft_state?: string
+  term?: string
+  leader_id?: string
+  leader_api_url?: string
+  commit_index?: string
+  applied_index?: number
+  last_contact_ms?: number
+  advertise?: string
+  gate?: { open: boolean; voters: number; reachable: number; required: number }
+  members: ClusterMember[]
+  mesh?: Record<string, Record<string, boolean>>
+  warnings: string[]
+  defaults: { advertise?: string; listen?: string }
+}
+
+export interface EnrollmentToken {
+  id: string
+  description: string
+  created_by: string
+  created_at: string
+  expires_at: string
+  used_at?: string
+  used_by_node?: string
+  revoked_at?: string
+}

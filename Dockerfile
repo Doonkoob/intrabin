@@ -40,7 +40,7 @@ COPY --from=build --chown=65532:65532 /out/data /var/lib/intrabin
 ENV INTRABIN_DATA_DIR=/var/lib/intrabin \
     INTRABIN_LISTEN=:8080
 USER 65532:65532
-EXPOSE 8080
+EXPOSE 8080 7443
 VOLUME ["/var/lib/intrabin"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/usr/local/bin/intrabin", "healthcheck"]
 ENTRYPOINT ["/usr/local/bin/intrabin"]

@@ -95,7 +95,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]*model.User, error) {
 
 // UpdateUser persists mutable user fields.
 func (s *Store) UpdateUser(ctx context.Context, u *model.User) error {
-	u.UpdatedAt = time.Now().UTC()
+	u.UpdatedAt = Now(ctx)
 	res, err := s.DB.ExecContext(ctx, `UPDATE users SET display_name=?, role=?, disabled=?, language=?, updated_at=? WHERE id=?`,
 		u.DisplayName, string(u.Role), boolInt(u.Disabled), u.Language, ms(u.UpdatedAt), u.ID)
 	if err != nil {
@@ -114,7 +114,7 @@ func (s *Store) SetPassword(ctx context.Context, userID, hash string) error {
 		return err
 	}
 	defer tx.Rollback()
-	now := ms(time.Now())
+	now := ms(Now(ctx))
 	res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash=?, password_changed_at=?, updated_at=? WHERE id=?`, hash, now, now, userID)
 	if err != nil {
 		return err
@@ -129,7 +129,7 @@ func (s *Store) SetPassword(ctx context.Context, userID, hash string) error {
 }
 
 func (s *Store) TouchLogin(ctx context.Context, userID string) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE users SET last_login_at=? WHERE id=?`, ms(time.Now()), userID)
+	_, err := s.DB.ExecContext(ctx, `UPDATE users SET last_login_at=? WHERE id=?`, ms(Now(ctx)), userID)
 	return err
 }
 

@@ -3,7 +3,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X github.com/intrabin/intrabin/internal/node.Version=$(VERSION) -X github.com/intrabin/intrabin/internal/node.Commit=$(COMMIT) -X github.com/intrabin/intrabin/internal/node.BuildDate=$(DATE)
 
-.PHONY: all web build test test-go test-e2e lint run docker clean
+.PHONY: all web build test test-go test-e2e test-cluster test-cluster-compose lint run docker clean
 
 all: build
 
@@ -22,6 +22,12 @@ test-go:
 
 test-e2e: build
 	cd apps/web && npx playwright test
+
+test-cluster: build
+	tests/cluster/run_local.sh
+
+test-cluster-compose:
+	tests/cluster/run_compose.sh
 
 run: build
 	INTRABIN_DATA_DIR=./data INTRABIN_LOG_FORMAT=text ./bin/intrabin

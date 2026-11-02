@@ -18,7 +18,9 @@ import (
 
 	"github.com/intrabin/intrabin/internal/api"
 	"github.com/intrabin/intrabin/internal/audit"
+	"github.com/intrabin/intrabin/internal/cluster"
 	"github.com/intrabin/intrabin/internal/config"
+	"github.com/intrabin/intrabin/internal/controlplane"
 	"github.com/intrabin/intrabin/internal/incidents"
 	"github.com/intrabin/intrabin/internal/monitoring"
 	"github.com/intrabin/intrabin/internal/node"
@@ -85,7 +87,11 @@ func serve() error {
 	if created {
 		log.Warn("generated a new master key in the data directory; back it up together with the database", "path", cfg.DataDir+"/master.key")
 	}
-	box, err := security.NewSecretBox(key)
+	box, err := security.NewSecretBox(key) // data key: switched to the cluster data key in cluster mode
+	if err != nil {
+		return err
+	}
+	masterBox, err := security.NewSecretBox(key) // node master key: wraps the cluster data key at rest
 	if err != nil {
 		return err
 	}
@@ -94,27 +100,40 @@ func serve() error {
 		return err
 	}
 	log = log.With("node_id", n.Identity.ID)
-	auditLog := audit.New(store, log)
-	incMgr := incidents.NewManager(store, log)
+	cp := controlplane.New(store)
+	auditLog := audit.New(cp, log)
+	incMgr := incidents.NewManager(controlplane.IncidentStore{Store: store, CP: cp}, log)
 	prober := monitoring.NewProber(node.Version)
-	engine := &monitoring.Engine{Store: store, Prober: prober, Incidents: incMgr, Log: log, NodeID: n.Identity.ID, Decrypt: api.DecryptMonitor(box),
-		IsEvaluator: n.CanManage, Workers: cfg.ProbeWorkers, Retention: retention(store)}
+	clusterMgr := cluster.New(cluster.Options{DataDir: cfg.DataDir, Listen: cfg.ClusterListen, Advertise: cfg.ClusterAdvertise, APIURL: cfg.PublicURL,
+		Location: cfg.NodeLocation, Store: store, CP: cp, DataBox: box, MasterBox: masterBox, Node: n, Log: log})
+	engine := &monitoring.Engine{Store: store, CP: cp, Prober: prober, Incidents: incMgr, Log: log, NodeID: n.Identity.ID, Decrypt: api.DecryptMonitor(box),
+		IsEvaluator: n.CanManage, Workers: cfg.ProbeWorkers, Retention: retention(store), ResultSink: clusterMgr.ResultSink(), Location: clusterMgr.LocationOf}
+	cp.X.OnApplied(func(op string) {
+		if op == "state.restore" || (strings.HasPrefix(op, "monitor.") && op != "monitor.round" && op != "monitor.state") {
+			engine.Reload()
+		}
+	})
+	if err := clusterMgr.Resume(ctx); err != nil {
+		return fmt.Errorf("resume cluster: %w", err)
+	}
+	defer clusterMgr.Shutdown()
 
 	setupToken := ""
 	if cnt, err := store.CountUsers(ctx); err != nil {
 		return err
-	} else if cnt == 0 {
+	} else if cnt == 0 && cfg.JoinToken == "" {
 		setupToken = cfg.SetupToken
 		if setupToken == "" {
 			setupToken = security.RandomToken(18)
 		}
 		log.Warn("initial setup required: open the web UI and enter this one-time setup token", "setup_token", setupToken)
 	}
-	srv := api.New(api.Deps{Config: cfg, Store: store, Node: n, Engine: engine, Prober: prober, Incidents: incMgr, Audit: auditLog,
+	srv := api.New(api.Deps{Config: cfg, Store: store, CP: cp, Cluster: clusterMgr, Node: n, Engine: engine, Prober: prober, Incidents: incMgr, Audit: auditLog,
 		SecretBox: box, Log: log, Web: web.Handler(), SetupToken: setupToken})
 
 	go engine.Run(ctx)
-	go housekeeping(ctx, store, log)
+	go housekeeping(ctx, cp, n, log)
+	go autoCluster(ctx, cfg, clusterMgr, log)
 
 	httpSrv := &http.Server{Addr: cfg.Listen, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10}
@@ -155,7 +174,7 @@ func retention(store *storage.Store) func(ctx context.Context) (time.Duration, t
 	}
 }
 
-func housekeeping(ctx context.Context, store *storage.Store, log *slog.Logger) {
+func housekeeping(ctx context.Context, cp *controlplane.CP, n *node.Node, log *slog.Logger) {
 	t := time.NewTicker(15 * time.Minute)
 	defer t.Stop()
 	for {
@@ -163,11 +182,48 @@ func housekeeping(ctx context.Context, store *storage.Store, log *slog.Logger) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if n, err := store.DeleteExpiredSessions(ctx, time.Now(), 12*time.Hour); err != nil {
-				log.Error("session cleanup", "err", err)
-			} else if n > 0 {
-				log.Info("expired sessions removed", "count", n)
+			if !n.CanManage() {
+				continue // sessions are replicated; the controller cleans them up
 			}
+			if err := cp.DeleteExpiredSessions(ctx, time.Now().UTC(), 12*time.Hour); err != nil {
+				log.Error("session cleanup", "err", err)
+			}
+		}
+	}
+}
+
+// autoCluster founds or joins a cluster at first start when configured through the environment
+// (used by automated deployments such as the 3-node Compose environment).
+func autoCluster(ctx context.Context, cfg *config.Config, m *cluster.Manager, log *slog.Logger) {
+	if m.Enabled() {
+		return
+	}
+	if cfg.ClusterInit {
+		if err := m.Init(ctx, ""); err != nil {
+			log.Error("automatic cluster initialisation failed", "err", err)
+		} else {
+			log.Info("cluster initialised")
+		}
+		return
+	}
+	if cfg.JoinToken == "" {
+		return
+	}
+	for attempt := 1; ; attempt++ {
+		res, err := m.Join(ctx, cfg.JoinToken, "", cluster.DataAction(cfg.JoinDataAction))
+		if err == nil {
+			log.Info("joined cluster", "cluster_id", res.ClusterID, "backup", res.BackupPath)
+			return
+		}
+		if errors.Is(err, cluster.ErrDataPresent) || errors.Is(err, cluster.ErrBadRequest) || strings.Contains(err.Error(), "join rejected") {
+			log.Error("automatic cluster join failed; not retrying", "err", err)
+			return
+		}
+		log.Warn("automatic cluster join failed; retrying", "attempt", attempt, "err", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
 		}
 	}
 }
@@ -233,6 +289,11 @@ func resetPassword(args []string) int {
 		return 1
 	}
 	defer store.Close()
+	if mode, _ := store.GetSetting(ctx, "local.cluster_mode"); mode == "1" {
+		fmt.Fprintln(os.Stderr, "this node is a cluster member: a local password change would diverge from the replicated state.\n"+
+			"Ask another owner/admin to reset the password in the UI on the leader. If every owner is locked out, see docs/operations/cluster.md (recovery).")
+		return 1
+	}
 	u, err := store.GetUserByUsername(ctx, *user)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "user not found")

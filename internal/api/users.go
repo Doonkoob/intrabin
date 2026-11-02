@@ -73,7 +73,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	u := &model.User{ID: uuid.NewString(), Username: req.Username, DisplayName: strings.TrimSpace(req.DisplayName), PasswordHash: hash, Role: req.Role,
 		Language: req.Language, CreatedAt: now, UpdatedAt: now, PasswordChangedAt: now}
-	if err := s.store.CreateUser(r.Context(), u); err != nil {
+	if err := s.cp.CreateUser(r.Context(), u); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
@@ -152,12 +152,12 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		changes["disabled"] = *req.Disabled
 		u.Disabled = *req.Disabled
 	}
-	if err := s.store.UpdateUser(r.Context(), u); err != nil {
+	if err := s.cp.UpdateUser(r.Context(), u); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
 	if u.Disabled || changes["role"] != nil {
-		_ = s.store.DeleteUserSessions(r.Context(), u.ID) // force re-authentication with new privileges
+		_ = s.cp.DeleteUserSessions(r.Context(), u.ID) // force re-authentication with new privileges
 	}
 	action := "user.update"
 	if _, ok := changes["role"]; ok {
@@ -203,7 +203,7 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		s.writeErr(w, r, err)
 		return
 	}
-	if err := s.store.SetPassword(r.Context(), u.ID, hash); err != nil {
+	if err := s.cp.SetPassword(r.Context(), u.ID, hash); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
@@ -237,7 +237,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.store.DeleteUser(r.Context(), u.ID); err != nil {
+	if err := s.cp.DeleteUser(r.Context(), u.ID); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}

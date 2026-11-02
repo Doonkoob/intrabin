@@ -2,10 +2,10 @@
 
 Self-hosted, open-source **uptime monitoring, incident detection and (upcoming) recovery automation**.
 One Go binary with an embedded React UI, embedded SQLite storage, Persian/English (RTL/LTR) and
-light/dark themes. Designed so that every installation runs the same software and can later join a
-Raft-based cluster for multi-location monitoring.
+light/dark themes. Every installation runs the same software; nodes can form a Raft cluster for
+multi-location monitoring with automatic leader failover.
 
-> Status: **Phase 1 (standalone product) is functional.** Clustering, automation, DNS providers and
+> Status: **Phases 1 (standalone) and 2 (clustering) are functional.** Automation, DNS providers and
 > disaster-recovery workflows are designed but not implemented yet — see
 > [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 
@@ -19,6 +19,10 @@ Raft-based cluster for multi-location monitoring.
 * Maintenance windows, monitor groups and tags.
 * Users with Owner/Admin/Operator/Viewer roles, Argon2id passwords, CSRF protection, login rate limiting, audit log.
 * Secrets encrypted at rest (AES-256-GCM) and never returned by the API.
+* **Clustering**: create a cluster from any node, add nodes with single-use join tokens, promote them
+  to voters; Raft (hashicorp/raft) replicates the control plane, peers use mutual TLS, followers ship
+  probe results to the leader, a mesh safety gate and NO_QUORUM mode prevent split-brain actions.
+  See [docs/operations/cluster.md](docs/operations/cluster.md).
 * Prometheus metrics, structured JSON logs, health/readiness endpoints, OpenAPI spec at `/api/v1/openapi.yaml`.
 
 ## Quick start (Docker Compose)
@@ -38,6 +42,8 @@ make build        # builds apps/web and bin/intrabin
 make run          # runs with ./data
 make test         # go vet + go test -race
 make test-e2e     # Playwright UI tests against a fresh binary
+make test-cluster # 3 local processes: join, promote, leader failover, quorum loss
+tests/cluster/run_compose.sh   # same test against a 3-node Docker Compose cluster
 cd apps/web && npm run dev   # Vite dev server proxying /api to :8080
 ```
 
@@ -46,6 +52,8 @@ cd apps/web && npm run dev   # Vite dev server proxying /api to :8080
 cmd/intrabin/          main binary (serve, healthcheck, backup, reset-password, version)
 internal/api/          HTTP API, middleware, OpenAPI spec
 internal/auth/         RBAC, login throttling
+internal/cluster/      Raft, mTLS transport, CA/enrollment, mesh gate, result shipping
+internal/controlplane/ replicated write path (commands executed locally or via Raft)
 internal/audit/        audit logger
 internal/config/       environment configuration
 internal/incidents/    incident state machine and manager
@@ -59,6 +67,7 @@ internal/web/          embedded UI assets
 apps/web/              React + TypeScript + Tailwind UI, Playwright tests
 docs/                  architecture, ADRs, security, operations
 tests/smoke/           Docker Compose smoke test
+tests/cluster/         cluster e2e test (local processes or 3-node Compose)
 ```
 
 ## License

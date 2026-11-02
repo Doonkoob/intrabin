@@ -17,7 +17,7 @@ Open `http://127.0.0.1:8080`, paste the setup token, create the owner account.
 | Port | Purpose | Default exposure |
 |---|---|---|
 | 8080/tcp | Web UI + API (+ `/metrics` with auth) | `127.0.0.1` only |
-| 7946/tcp | Peer/Raft transport (Phase 2) | not yet used |
+| 7443/tcp | Cluster port: Raft + peer API with mutual TLS (only used after creating or joining a cluster; see [cluster.md](cluster.md)) | not published by the single-node Compose file |
 
 To expose Intrabin, put a TLS reverse proxy in front (recommended) and set
 `INTRABIN_TRUSTED_PROXIES` to the proxy's address so client IPs and `https` are detected, or set

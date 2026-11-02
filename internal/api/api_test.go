@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/intrabin/intrabin/internal/audit"
+	"github.com/intrabin/intrabin/internal/cluster"
 	"github.com/intrabin/intrabin/internal/config"
+	"github.com/intrabin/intrabin/internal/controlplane"
 	"github.com/intrabin/intrabin/internal/incidents"
 	"github.com/intrabin/intrabin/internal/model"
 	"github.com/intrabin/intrabin/internal/monitoring"
@@ -51,7 +53,10 @@ func newEnv(t *testing.T) *env {
 	go eng.Run(t.Context())
 	cfg := &config.Config{MinInterval: 10 * time.Second, SessionTTL: time.Hour, SessionIdle: time.Hour}
 	fast := security.Argon2Params{Memory: 1024, Time: 1, Threads: 1, KeyLen: 32, SaltLen: 16}
-	s := New(Deps{Config: cfg, Store: st, Node: n, Engine: eng, Prober: prober, Incidents: inc, Audit: audit.New(st, log), SecretBox: box, Log: log, SetupToken: setupTok, Argon2: &fast})
+	master, _ := security.NewSecretBox(bytes.Repeat([]byte{1}, 32))
+	cp := controlplane.New(st)
+	cm := cluster.New(cluster.Options{DataDir: dir, Listen: "127.0.0.1:0", Store: st, CP: cp, DataBox: box, MasterBox: master, Node: n, Log: log})
+	s := New(Deps{Config: cfg, Store: st, CP: cp, Cluster: cm, Node: n, Engine: eng, Prober: prober, Incidents: inc, Audit: audit.New(cp, log), SecretBox: box, Log: log, SetupToken: setupTok, Argon2: &fast})
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 	return &env{t: t, srv: srv, store: st, node: n}
@@ -380,5 +385,52 @@ func TestSecurityHeadersAndHealth(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 401 {
 		t.Fatalf("metrics exposed without auth: %d", resp.StatusCode)
+	}
+}
+
+func TestClusterEndpointsStandalone(t *testing.T) {
+	e := newEnv(t)
+	// A fresh node can be joined only with its setup token.
+	anon := e.client()
+	var errBody struct {
+		Error APIError `json:"error"`
+	}
+	if code := anon.do("POST", "/api/v1/setup/join", map[string]any{"setup_token": "wrong-token-xxxxxxxxxx", "token": "IBJ1.x"}, &errBody); code != 422 {
+		t.Fatalf("setup/join with wrong setup token: %d %+v", code, errBody)
+	}
+	if code := anon.do("POST", "/api/v1/setup/join", map[string]any{"setup_token": setupTok, "token": "not-a-token"}, &errBody); code != 400 {
+		t.Fatalf("setup/join with malformed token: %d %+v", code, errBody)
+	}
+	owner := e.owner()
+	var st struct {
+		Cluster struct {
+			Enabled bool   `json:"enabled"`
+			Role    string `json:"role"`
+		} `json:"cluster"`
+	}
+	if code := owner.do("GET", "/api/v1/cluster", nil, &st); code != 200 || st.Cluster.Enabled || st.Cluster.Role != "STANDALONE" {
+		t.Fatalf("cluster status: %d %+v", code, st)
+	}
+	if code := owner.do("POST", "/api/v1/cluster/tokens", map[string]any{"ttl_minutes": 30}, &errBody); code != 409 || errBody.Error.Code != "cluster_state" {
+		t.Fatalf("tokens on standalone: %d %+v", code, errBody)
+	}
+	// After setup, setup/join is closed.
+	if code := anon.do("POST", "/api/v1/setup/join", map[string]any{"setup_token": setupTok, "token": "IBJ1.x"}, &errBody); code != 409 {
+		t.Fatalf("setup/join after setup: %d", code)
+	}
+	// Joining replaces local data: owner only, and a data choice is required when data exists.
+	if code := owner.do("POST", "/api/v1/cluster/join", map[string]any{"token": "IBJ1.eyJ4IjoxfQ", "data_action": "keep"}, &errBody); code != 422 {
+		t.Fatalf("invalid data_action: %d %+v", code, errBody)
+	}
+	if code := owner.do("POST", "/api/v1/users", map[string]any{"username": "admin2", "password": "admin2-password", "role": "admin"}, nil); code != 201 {
+		t.Fatalf("create admin: %d", code)
+	}
+	admin := e.client()
+	if code := admin.do("POST", "/api/v1/auth/login", map[string]any{"username": "admin2", "password": "admin2-password"}, nil); code != 200 {
+		t.Fatalf("admin login: %d", code)
+	}
+	admin.loadCSRF()
+	if code := admin.do("POST", "/api/v1/cluster/join", map[string]any{"token": "IBJ1.x", "data_action": "export"}, &errBody); code != 403 {
+		t.Fatalf("admin join must be forbidden: %d %+v", code, errBody)
 	}
 }

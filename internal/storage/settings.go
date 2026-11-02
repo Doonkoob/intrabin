@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 )
 
 // GetSetting returns a setting value or ErrNotFound.
@@ -20,7 +19,7 @@ func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
 // SetSetting upserts a setting.
 func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES(?,?,?)
-		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`, key, value, ms(time.Now()))
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`, key, value, ms(Now(ctx)))
 	return err
 }
 

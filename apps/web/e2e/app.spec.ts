@@ -23,7 +23,7 @@ test.describe.serial('Intrabin UI', () => {
     await page.getByLabel('Setup token').fill('e2e-setup-token-0123456789')
     await page.getByRole('button', { name: 'Create owner account' }).click()
     await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
-    await expect(page.getByTestId('node-role')).toHaveText(/STANDALONE/)
+    await expect(page.getByTestId('node-role')).toHaveText(/Standalone/)
   })
 
   test('login and logout', async ({ page }) => {
@@ -135,7 +135,8 @@ test.describe.serial('Intrabin UI', () => {
     await page.getByRole('link', { name: 'Activity & audit' }).click()
     await expect(page.getByText('monitor.create')).toBeVisible()
     await page.getByRole('link', { name: 'Cluster / Nodes' }).click()
-    await expect(page.getByText('Mode: Standalone')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Create a cluster' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Join an existing cluster' })).toBeVisible()
   })
 
   test('responsive layout on a phone', async ({ page }) => {
@@ -148,5 +149,27 @@ test.describe.serial('Intrabin UI', () => {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)
     expect(overflow).toBe(false)
     await page.screenshot({ path: 'test-results/screens/mobile-monitors.png', fullPage: true })
+  })
+
+  test('create a cluster, issue and revoke a join token', async ({ page }) => {
+    await login(page)
+    await page.getByRole('link', { name: 'Cluster / Nodes' }).click()
+    await page.getByLabel('Cluster address').first().fill(`127.0.0.1:${process.env.E2E_CLUSTER_PORT ?? 17999}`)
+    await page.getByRole('button', { name: 'Create cluster' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Create cluster' }).click()
+    await expect(page.getByTestId('node-role')).toHaveText(/Leader/, { timeout: 20_000 })
+    await expect(page.getByTestId('gate')).toContainText('Open')
+    await page.getByRole('button', { name: 'New join token' }).click()
+    await page.getByRole('dialog').getByLabel('Description').fill('second node')
+    await page.getByRole('dialog').getByRole('button', { name: 'Create token' }).click()
+    await expect(page.getByTestId('join-token')).toHaveValue(/^IBJ1\./)
+    await page.screenshot({ path: 'test-results/screens/cluster-token.png', fullPage: true })
+    await page.getByRole('button', { name: 'Done' }).click()
+    await expect(page.getByRole('cell', { name: 'second node' })).toBeVisible()
+    await page.getByRole('button', { name: 'Revoke' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Revoke' }).click()
+    await expect(page.getByRole('cell', { name: 'Revoked' })).toBeVisible()
+    await page.getByRole('link', { name: 'Monitors' }).click()
+    await expect(page.getByRole('heading', { name: 'Monitors' })).toBeVisible()
   })
 })

@@ -265,4 +265,25 @@ paths:
     get: { summary: Instance settings, responses: { '200': { description: OK } } }
     patch: { summary: Update instance settings (settings.manage), responses: { '200': { description: OK } } }
   /node: { get: { summary: Local node status (available on every node, including followers), responses: { '200': { description: OK } } } }
-  /cluster: { get: { summary: Cluster membership and quorum status, responses: { '200': { description: OK } } } }
+  /cluster: { get: { summary: "Cluster status: role, leader, Raft term and indexes, mesh gate, members, reachability matrix, warnings", responses: { '200': { description: OK } } } }
+  /cluster/init:
+    post:
+      summary: "Found a new cluster from this standalone node (cluster.manage). Body: { advertise: host:port }"
+      responses: { '200': { description: Cluster created; this node is the first voter }, '409': { description: Already clustered } }
+  /cluster/join:
+    post:
+      summary: "Join an existing cluster (owner only). Body: { token, advertise, data_action: export|discard }. Local data is replaced; export writes a backup first."
+      responses: { '200': { description: Joined as a non-voter; the session is ended }, '409': { description: "data_present: choose export or discard" }, '502': { description: Cluster unreachable or token rejected } }
+  /setup/join:
+    post:
+      summary: "Join a cluster from a fresh node instead of running setup (requires the node's one-time setup token)"
+      responses: { '200': { description: Joined }, '409': { description: Setup already completed } }
+  /cluster/tokens:
+    get: { summary: List join tokens (metadata only; secrets are never returned again), responses: { '200': { description: OK } } }
+    post:
+      summary: "Create a single-use join token (cluster.manage, leader). Body: { description, ttl_minutes: 5..1440 }. The token is returned once."
+      responses: { '201': { description: Created } }
+  /cluster/tokens/{id}: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], delete: { summary: Revoke an unused token, responses: { '200': { description: OK } } } }
+  /cluster/nodes/{id}/promote: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], post: { summary: Promote a caught-up and reachable non-voter to voter, responses: { '200': { description: OK }, '400': { description: Not reachable or still catching up } } } }
+  /cluster/nodes/{id}/demote: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], post: { summary: Demote a voter to non-voter, responses: { '200': { description: OK } } } }
+  /cluster/nodes/{id}: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], delete: { summary: Remove a member (never automatic), responses: { '200': { description: OK } } } }

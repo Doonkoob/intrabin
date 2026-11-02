@@ -41,7 +41,7 @@ func (s *Server) authenticate(r *http.Request) (*Principal, error) {
 	}
 	now := time.Now().UTC()
 	if now.After(se.ExpiresAt) || now.Sub(se.LastSeenAt) > s.cfg.SessionIdle {
-		_ = s.store.DeleteSession(r.Context(), hash)
+		_ = s.cp.DeleteSession(r.Context(), hash)
 		return nil, errUnauthorized
 	}
 	u, err := s.store.GetUser(r.Context(), se.UserID)
@@ -52,11 +52,11 @@ func (s *Server) authenticate(r *http.Request) (*Principal, error) {
 		return nil, err
 	}
 	if u.Disabled {
-		_ = s.store.DeleteSession(r.Context(), hash)
+		_ = s.cp.DeleteSession(r.Context(), hash)
 		return nil, errUnauthorized
 	}
 	if now.Sub(se.LastSeenAt) > time.Minute {
-		_ = s.store.TouchSession(r.Context(), hash, now)
+		_ = s.cp.TouchSession(r.Context(), hash, now)
 	}
 	return &Principal{User: u, Session: se, IP: s.clientIP(r)}, nil
 }
@@ -81,7 +81,7 @@ func (s *Server) requireAuth(perm auth.Permission, mgmt bool, h http.HandlerFunc
 			return
 		}
 		if mgmt && !s.node.CanManage() {
-			s.writeErr(w, r, errReadOnlyNode)
+			s.writeErr(w, r, s.readOnlyErr(r))
 			return
 		}
 		h(w, r.WithContext(context.WithValue(r.Context(), ctxPrincipal, p)))
@@ -91,6 +91,9 @@ func (s *Server) requireAuth(perm auth.Permission, mgmt bool, h http.HandlerFunc
 // ---- setup ----
 
 func (s *Server) needsSetup(ctx context.Context) (bool, error) {
+	if s.cluster != nil && s.cluster.Enabled() && !s.node.CanManage() {
+		return false, nil // users are replicated from the cluster; setup happens on the leader
+	}
 	n, err := s.store.CountUsers(ctx)
 	return n == 0, err
 }
@@ -172,7 +175,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	u := &model.User{ID: uuid.NewString(), Username: req.Username, DisplayName: strings.TrimSpace(req.DisplayName), PasswordHash: hash,
 		Role: model.RoleOwner, Language: req.Language, CreatedAt: now, UpdatedAt: now, PasswordChangedAt: now}
-	if err := s.store.CreateFirstUser(r.Context(), u); err != nil {
+	if err := s.cp.CreateFirstUser(r.Context(), u); err != nil {
 		if errors.Is(err, storage.ErrConflict) {
 			s.writeErr(w, r, &APIError{Status: 409, Code: "already_initialized", Message: "Initial setup has already been completed."})
 			return
@@ -181,9 +184,9 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setupToken = "" // one-time
-	_ = s.store.SetSetting(r.Context(), "app.default_language", req.Language)
+	_ = s.cp.SetSetting(r.Context(), "app.default_language", req.Language)
 	if req.InstanceName != "" {
-		_ = s.store.SetSetting(r.Context(), "app.instance_name", strings.TrimSpace(req.InstanceName))
+		_ = s.cp.SetSetting(r.Context(), "app.instance_name", strings.TrimSpace(req.InstanceName))
 	}
 	s.audit.Record(r.Context(), audit.Actor{ID: u.ID, Name: u.Username, IP: ip}, "setup.completed", "user", u.ID, "", nil)
 	if err := s.startSession(w, r, u); err != nil {
@@ -246,7 +249,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.limiter.Succeed(ipKey)
 	s.limiter.Succeed(userKey)
-	_ = s.store.TouchLogin(r.Context(), u.ID)
+	_ = s.cp.TouchLogin(r.Context(), u.ID)
 	if err := s.startSession(w, r, u); err != nil {
 		s.writeErr(w, r, err)
 		return
@@ -264,7 +267,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *model.U
 	}
 	se := &model.Session{TokenHash: security.HashToken(tok), UserID: u.ID, CSRFToken: security.RandomToken(24), CreatedAt: now, LastSeenAt: now,
 		ExpiresAt: now.Add(s.cfg.SessionTTL), IP: s.clientIP(r), UserAgent: ua}
-	if err := s.store.CreateSession(r.Context(), se); err != nil {
+	if err := s.cp.CreateSession(r.Context(), se); err != nil {
 		return err
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: tok, Path: "/", HttpOnly: true, Secure: s.isSecureRequest(r), SameSite: http.SameSiteLaxMode, Expires: se.ExpiresAt})
@@ -273,7 +276,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *model.U
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
-	_ = s.store.DeleteSession(r.Context(), p.Session.TokenHash)
+	_ = s.cp.DeleteSession(r.Context(), p.Session.TokenHash)
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, Secure: s.isSecureRequest(r), SameSite: http.SameSiteLaxMode, MaxAge: -1})
 	s.audit.Record(r.Context(), p.actor(), "auth.logout", "user", p.User.ID, "", nil)
 	writeJSON(w, 200, map[string]any{"ok": true})
@@ -315,7 +318,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, r, err)
 		return
 	}
-	if err := s.store.SetPassword(r.Context(), p.User.ID, hash); err != nil { // revokes all sessions
+	if err := s.cp.SetPassword(r.Context(), p.User.ID, hash); err != nil { // revokes all sessions
 		s.writeErr(w, r, err)
 		return
 	}
@@ -354,7 +357,7 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		u.Language = *req.Language
 	}
-	if err := s.store.UpdateUser(r.Context(), u); err != nil {
+	if err := s.cp.UpdateUser(r.Context(), u); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}

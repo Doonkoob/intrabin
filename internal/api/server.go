@@ -17,7 +17,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/intrabin/intrabin/internal/audit"
 	"github.com/intrabin/intrabin/internal/auth"
+	"github.com/intrabin/intrabin/internal/cluster"
 	"github.com/intrabin/intrabin/internal/config"
+	"github.com/intrabin/intrabin/internal/controlplane"
 	"github.com/intrabin/intrabin/internal/incidents"
 	"github.com/intrabin/intrabin/internal/metrics"
 	"github.com/intrabin/intrabin/internal/model"
@@ -32,6 +34,8 @@ import (
 type Server struct {
 	cfg       *config.Config
 	store     *storage.Store
+	cp        *controlplane.CP
+	cluster   *cluster.Manager
 	node      *node.Node
 	engine    *monitoring.Engine
 	prober    *monitoring.Prober
@@ -51,6 +55,8 @@ type Server struct {
 type Deps struct {
 	Config     *config.Config
 	Store      *storage.Store
+	CP         *controlplane.CP
+	Cluster    *cluster.Manager
 	Node       *node.Node
 	Engine     *monitoring.Engine
 	Prober     *monitoring.Prober
@@ -64,8 +70,11 @@ type Deps struct {
 }
 
 func New(d Deps) *Server {
-	s := &Server{cfg: d.Config, store: d.Store, node: d.Node, engine: d.Engine, prober: d.Prober, incidents: d.Incidents,
+	s := &Server{cfg: d.Config, store: d.Store, cp: d.CP, cluster: d.Cluster, node: d.Node, engine: d.Engine, prober: d.Prober, incidents: d.Incidents,
 		audit: d.Audit, box: d.SecretBox, limiter: auth.NewLoginLimiter(), log: d.Log, web: d.Web, setupToken: d.SetupToken, argon: security.DefaultArgon2}
+	if s.cp == nil {
+		s.cp = controlplane.New(d.Store)
+	}
 	if d.Argon2 != nil {
 		s.argon = *d.Argon2
 	}
@@ -113,6 +122,7 @@ func (s *Server) Handler() http.Handler {
 		{"GET /api/v1/setup/status", s.handleSetupStatus},
 		{"POST /api/v1/setup", s.handleSetup},
 		{"POST /api/v1/auth/login", s.handleLogin},
+		{"POST /api/v1/setup/join", s.handleSetupJoin},
 		{"GET /api/v1/openapi.yaml", s.handleOpenAPI},
 	}
 	for _, rt := range public {
@@ -135,6 +145,14 @@ func (s *Server) Handler() http.Handler {
 
 		{"GET /api/v1/node", auth.PermView, false, s.handleNode},
 		{"GET /api/v1/cluster", auth.PermView, false, s.handleCluster},
+		{"POST /api/v1/cluster/init", auth.PermClusterManage, true, s.handleClusterInit},
+		{"POST /api/v1/cluster/join", auth.PermClusterManage, true, s.handleClusterJoin},
+		{"GET /api/v1/cluster/tokens", auth.PermClusterManage, true, s.handleListTokens},
+		{"POST /api/v1/cluster/tokens", auth.PermClusterManage, true, s.handleCreateToken},
+		{"DELETE /api/v1/cluster/tokens/{id}", auth.PermClusterManage, true, s.handleRevokeToken},
+		{"POST /api/v1/cluster/nodes/{id}/promote", auth.PermClusterManage, true, s.handlePromoteNode},
+		{"POST /api/v1/cluster/nodes/{id}/demote", auth.PermClusterManage, true, s.handleDemoteNode},
+		{"DELETE /api/v1/cluster/nodes/{id}", auth.PermClusterManage, true, s.handleRemoveNode},
 
 		{"GET /api/v1/overview", auth.PermView, true, s.handleOverview},
 

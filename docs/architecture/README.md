@@ -28,14 +28,14 @@ The web/API process never executes user-supplied scripts. Scripts run in a separ
 
 | Class | Examples | Consistency | Store |
 |---|---|---|---|
-| Control plane | users, roles, monitors, policies, groups, incidents, workflow state, timers, DNS snapshots, encrypted secrets, audit of sensitive actions | Linearizable via Raft (Phase 2). Standalone: local SQLite transactions. | SQLite `control` tables, written only through the control-plane service |
-| Monitoring data | probe results, round verdicts, hourly rollups | Eventually consistent, at-least-once delivery with idempotent `result_id` | SQLite `check_results`, `round_results`, `monitor_hourly` on the evaluating (leader) node; followers buffer locally |
+| Control plane | users, sessions, monitors, policies, groups, monitor state, **round verdicts + hourly rollups**, incidents, maintenance, audit, settings, enrollment tokens (later: workflow state, timers, DNS snapshots) | Committed through Raft in a cluster (ADR-0008); local SQLite transactions when standalone | SQLite, written only through `internal/controlplane` |
+| Raw monitoring data | probe results | At-least-once delivery to the leader, idempotent by `result_id` | SQLite `check_results` on each node (own results) and on the leader (all results); followers buffer unsent IDs in `result_outbox` |
 
 Raw probe results are **not** written to the Raft log: at 30 s intervals × N monitors × M
 nodes this would dominate log size and snapshot time. Instead followers push batches to the
 leader over an authenticated channel, with local durable buffering and dedup by UUID. A new
-leader may miss a few seconds of raw history, which only affects charts; incident state and
-monitor state (counters) are control-plane data and are replicated (see ADR-0004).
+leader may miss a few seconds of raw history, which only affects per-probe views; round verdicts,
+monitor state and incidents are replicated (ADR-0004, ADR-0008).
 
 ## 3. Monitoring semantics (core correctness)
 
@@ -82,22 +82,46 @@ Transitions are validated by a pure function (`incidents.CanTransition`) and eve
 persisted with an event row (actor, timestamp, reason). One open incident per monitor
 (deduplication). A failure within `cooldown_seconds` of resolution reopens the same incident.
 
-## 5. Cluster design (Phase 2, designed now)
+## 5. Cluster design (Phase 2, implemented)
 
-* Consensus: `hashicorp/raft` with `raft-boltdb` log store and file snapshots; the FSM applies
-  control-plane commands to the local SQLite DB. No custom voting logic.
-* New nodes join as **non-voters**; admins promote to voter after sync + connectivity checks.
-* **Strict mesh gate**: before a node starts an election (Raft pre-vote hook point) and before the
-  leader dispatches any mutation, it requires fresh (≤ `mesh_freshness`) bidirectional reachability
-  proofs with a majority of *configured voters*. The failed leader is not required to be reachable.
-  This is an additional gate; Raft's own majority rule is never weakened.
-* **Fencing**: every external mutation records `(term, leader_id, action_id)` durably *before*
-  dispatch, checks `raft.VerifyLeader()` immediately before dispatch, and stops on leadership loss.
-  In-flight actions with uncertain outcome become `UNKNOWN_OUTCOME` and are reconciled, never replayed.
-* Peer transport: mutual TLS with per-node certificates issued by a cluster CA during enrollment.
+```
+   node1 (LEADER)                       node2 (FOLLOWER)                    node3 (FOLLOWER)
+ ┌──────────────────┐   Raft log      ┌──────────────────┐               ┌──────────────────┐
+ │ API ─▶ controlplane ─▶ raft.Apply ─▶│ FSM ─▶ SQLite     │               │ FSM ─▶ SQLite     │
+ │ FSM ─▶ SQLite     │◀── results ─────│ engine (probes)  │──── results ─▶│ engine (probes)  │
+ │ engine: probes +  │   (mTLS, outbox)│ outbox           │               │ outbox           │
+ │ round evaluation  │◀──── ping ─────▶│ mesh pinger      │◀──── ping ───▶│ mesh pinger      │
+ └──────────────────┘                  └──────────────────┘               └──────────────────┘
+          cluster port 7443: TLS 1.3, ALPN "intrabin-raft" (Raft streams) or HTTP (peer API)
+```
+
+* **Consensus**: `hashicorp/raft` (pre-vote enabled) with `raft-boltdb` log/stable store and file
+  snapshots under `data/raft/`. No custom voting logic. The FSM executes control-plane commands
+  (ADR-0008). Heartbeat/election timeout 1 s, leader lease 500 ms.
+* **Transport**: one TCP port multiplexed by ALPN. Raft streams require a verified client
+  certificate; the peer API (`/cluster/v1/join|ping|apply|results`) requires a member certificate
+  except for `join`, which is authenticated by the enrollment token.
+* **Enrollment**: cluster CA (ECDSA P-256, 10 y) created at cluster creation; its key is replicated
+  sealed with the cluster data key so any future leader can sign. Join tokens embed the cluster ID,
+  token ID, secret, CA fingerprint and voter addresses. New members join as **non-voters**; admins
+  promote them after they are reachable and caught up.
+* **Roles**: `STANDALONE`, `LEADER` (Raft leader with an open mesh gate), `FOLLOWER` (fresh contact
+  with a leader), `NO_QUORUM` (anything else). Only `STANDALONE` and `LEADER` serve management APIs
+  and evaluate rounds; every node probes.
+* **Strict mesh gate**: each node pings every member each second; a peer counts when both our ping to
+  it and its ping to us are fresh (≤ 5 s). The leader commits writes, evaluates and changes membership
+  only while `1 + reachable voters ≥ ⌊voters/2⌋ + 1`. The gate is in addition to Raft's majority and
+  is never relaxed automatically. Elections are stock Raft (no veto hook exists in hashicorp/raft).
+* **Result shipping**: followers insert their results locally, record IDs in `result_outbox`, and
+  ship batches (≤ 500) to the leader immediately and every second; the leader accepts only results
+  whose `node_id` matches the client certificate, dedups by ID and acknowledges. A node that becomes
+  leader clears its outbox (its results are already local).
+* **Fencing for external actions** (Phase 3+): actions will record `(term, leader_id, action_id)`
+  through the log before dispatch and re-check leadership and the gate immediately before dispatch;
+  uncertain outcomes become `UNKNOWN_OUTCOME`. Control-plane writes are already fenced by Raft itself.
 
 Sizing: 1 node = no HA; 2 voters tolerate 0 failures; 3 voters tolerate 1; 5 voters tolerate 2.
-Three voters is the recommended HA deployment.
+Three voters is the recommended HA deployment. Operations guide: [docs/operations/cluster.md](../operations/cluster.md).
 
 ## 6. Security model (summary — see docs/security/threat-model.md)
 

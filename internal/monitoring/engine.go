@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/intrabin/intrabin/internal/controlplane"
 	"github.com/intrabin/intrabin/internal/incidents"
 	"github.com/intrabin/intrabin/internal/metrics"
 	"github.com/intrabin/intrabin/internal/model"
@@ -42,7 +43,9 @@ const MaxCatchUpRounds = 500
 
 // Engine schedules probes for this node and evaluates rounds (when it is the evaluator).
 type Engine struct {
-	Store     *storage.Store
+	Store *storage.Store
+	// CP is the replicated write path for round verdicts and monitor state.
+	CP        *controlplane.CP
 	Prober    *Prober
 	Incidents *incidents.Manager
 	Log       *slog.Logger
@@ -78,6 +81,9 @@ func (e *Engine) init() {
 	}
 	if e.IsEvaluator == nil {
 		e.IsEvaluator = func() bool { return true }
+	}
+	if e.CP == nil {
+		e.CP = controlplane.New(e.Store)
 	}
 	if e.ResultSink == nil {
 		e.ResultSink = func(ctx context.Context, rs []*model.CheckResult) error {
@@ -316,7 +322,7 @@ func (e *Engine) evaluateRound(ctx context.Context, m *model.Monitor, st *model.
 		prev.Status = model.StatusUnknown
 	}
 	ns := NextState(prev, rr, in)
-	if err := e.Store.RecordRound(ctx, rr, &ns, m.IntervalSeconds); err != nil {
+	if err := e.CP.RecordRound(ctx, rr, &ns, m.IntervalSeconds); err != nil {
 		return err
 	}
 	metrics.RoundsTotal.WithLabelValues(string(rr.Verdict)).Inc()

@@ -336,3 +336,29 @@ type AuditEntry struct {
 	Outcome    string         `json:"outcome"`
 	Details    map[string]any `json:"details,omitempty"`
 }
+
+// EnrollmentToken is a single-use, short-lived cluster join credential. Only a hash of the
+// secret is stored.
+type EnrollmentToken struct {
+	ID          string     `json:"id"`
+	SecretHash  string     `json:"-"`
+	Description string     `json:"description"`
+	CreatedBy   string     `json:"created_by"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	UsedAt      *time.Time `json:"used_at,omitempty"`
+	UsedByNode  string     `json:"used_by_node,omitempty"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+}
+
+// ClusterNode is replicated display metadata about a cluster member.
+type ClusterNode struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	ClusterAddr string    `json:"cluster_addr"`
+	APIURL      string    `json:"api_url"`
+	Location    string    `json:"location"`
+	Version     string    `json:"version"`
+	JoinedAt    time.Time `json:"joined_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}

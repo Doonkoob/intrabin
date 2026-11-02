@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router'
 import { Activity, AlertOctagon, Boxes, CalendarClock, FolderTree, LayoutDashboard, LogOut, Menu, Monitor, Moon, ScrollText, Settings, Sun, SunMoon, Users, X } from 'lucide-react'
 import { usePrefs, useSession, type Theme } from '../app'
-import { post } from '../api'
+import { get, post } from '../api'
 import type { Key } from '../i18n'
 
 interface NavItem { to: string; label: Key; icon: ReactNode; perm?: string }
@@ -53,6 +53,19 @@ export function Layout() {
   const loc = useLocation()
   const navigate = useNavigate()
   useEffect(() => setOpen(false), [loc.pathname])
+  // Follow role changes (failover, quorum loss) so the UI switches between full and restricted views.
+  const [role, setRole] = useState(me?.node.role)
+  useEffect(() => {
+    setRole(me?.node.role)
+    const id = window.setInterval(async () => {
+      try {
+        const h = await get<{ role: typeof role }>('/health')
+        setRole(h.role)
+        if (h.role && me && h.role !== me.node.role) void refresh()
+      } catch { /* shown by page-level errors */ }
+    }, 5000)
+    return () => window.clearInterval(id)
+  }, [me, refresh])
   const logout = async () => {
     try { await post('/auth/logout') } finally { await refresh(); navigate('/login') }
   }
@@ -100,11 +113,14 @@ export function Layout() {
               <Menu className="size-5" />
             </button>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2 py-0.5 text-xs text-muted" data-testid="node-role">
-              <span className="size-1.5 rounded-full bg-up" aria-hidden />{me?.node.role}
+              <span className={`size-1.5 rounded-full ${role === 'NO_QUORUM' ? 'bg-down' : 'bg-up'}`} aria-hidden />{role ? t(`roleName.${role}` as Key) : ''}
             </span>
           </div>
           <PrefControls />
         </header>
+        {role === 'NO_QUORUM' && (
+          <div role="alert" className="border-b border-down/30 bg-down/10 px-4 py-2 text-sm text-down" data-testid="no-quorum-banner">{t('banner.noQuorum')}</div>
+        )}
         <main id="main" className="mx-auto max-w-7xl p-4 sm:p-6">
           <Outlet />
         </main>

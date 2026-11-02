@@ -29,6 +29,7 @@ export default defineConfig({
       INTRABIN_SETUP_TOKEN: 'e2e-setup-token-0123456789',
       INTRABIN_MIN_INTERVAL: '10s',
       INTRABIN_LOG_LEVEL: 'warn',
+      INTRABIN_CLUSTER_LISTEN: `127.0.0.1:${process.env.E2E_CLUSTER_PORT ?? 17999}`,
     },
   },
 })

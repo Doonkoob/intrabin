@@ -256,12 +256,22 @@ func (s *Server) normalizeMonitor(ctx context.Context, in *monitorInput) map[str
 			f["group_id"] = "Unknown group."
 		}
 	}
+	known := map[string]bool{s.node.Identity.ID: true}
+	if cn, err := s.store.ListClusterNodes(ctx); err == nil {
+		for _, n := range cn {
+			known[n.ID] = true
+		}
+	}
 	nodes := []string{}
+	seenNode := map[string]bool{}
 	for _, id := range in.NodeIDs {
-		if id != s.node.Identity.ID {
+		if !known[id] {
 			f["node_ids"] = "Unknown monitoring node."
 		}
-		nodes = append(nodes, id)
+		if !seenNode[id] {
+			seenNode[id] = true
+			nodes = append(nodes, id)
+		}
 	}
 	in.NodeIDs = nodes
 	return f
@@ -445,7 +455,7 @@ func (s *Server) handleCreateMonitor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.SecretBlob = blob
-	if err := s.store.CreateMonitor(r.Context(), m); err != nil {
+	if err := s.cp.CreateMonitor(r.Context(), m); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
@@ -525,7 +535,7 @@ func (s *Server) handleUpdateMonitor(w http.ResponseWriter, r *http.Request) {
 		m.Version = old.Version + 1
 	}
 	m.UpdatedAt = time.Now().UTC()
-	if err := s.store.UpdateMonitor(r.Context(), &m); err != nil {
+	if err := s.cp.UpdateMonitor(r.Context(), &m); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
@@ -554,7 +564,7 @@ func (s *Server) resetState(ctx context.Context, m *model.Monitor) error {
 	if !m.Enabled {
 		status = model.StatusPaused
 	}
-	return s.store.SaveMonitorState(ctx, &model.MonitorState{MonitorID: m.ID, Status: status, StatusSince: now, UpdatedAt: now})
+	return s.cp.SaveMonitorState(ctx, &model.MonitorState{MonitorID: m.ID, Status: status, StatusSince: now, UpdatedAt: now})
 }
 
 func (s *Server) handleDeleteMonitor(w http.ResponseWriter, r *http.Request) {
@@ -564,7 +574,7 @@ func (s *Server) handleDeleteMonitor(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, r, err)
 		return
 	}
-	if err := s.store.DeleteMonitor(r.Context(), m.ID); err != nil {
+	if err := s.cp.DeleteMonitor(r.Context(), m.ID); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
@@ -583,7 +593,7 @@ func (s *Server) setEnabled(w http.ResponseWriter, r *http.Request, enabled bool
 	if m.Enabled != enabled {
 		m.Enabled = enabled
 		m.UpdatedAt = time.Now().UTC()
-		if err := s.store.UpdateMonitor(r.Context(), m); err != nil {
+		if err := s.cp.UpdateMonitor(r.Context(), m); err != nil {
 			s.writeErr(w, r, err)
 			return
 		}
@@ -607,8 +617,12 @@ func (s *Server) setEnabled(w http.ResponseWriter, r *http.Request, enabled bool
 	writeJSON(w, 200, map[string]any{"monitor": v})
 }
 
-func (s *Server) handlePauseMonitor(w http.ResponseWriter, r *http.Request)  { s.setEnabled(w, r, false) }
-func (s *Server) handleResumeMonitor(w http.ResponseWriter, r *http.Request) { s.setEnabled(w, r, true) }
+func (s *Server) handlePauseMonitor(w http.ResponseWriter, r *http.Request) {
+	s.setEnabled(w, r, false)
+}
+func (s *Server) handleResumeMonitor(w http.ResponseWriter, r *http.Request) {
+	s.setEnabled(w, r, true)
+}
 
 // handleTestMonitor runs one probe with the submitted configuration without saving it.
 func (s *Server) handleTestMonitor(w http.ResponseWriter, r *http.Request) {
@@ -720,5 +734,11 @@ func (s *Server) handleMonitorStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) nodeNames() map[string]string {
-	return map[string]string{s.node.Identity.ID: s.node.Identity.Name}
+	out := map[string]string{s.node.Identity.ID: s.node.Identity.Name}
+	if nodes, err := s.store.ListClusterNodes(context.Background()); err == nil {
+		for _, n := range nodes {
+			out[n.ID] = n.Name
+		}
+	}
+	return out
 }

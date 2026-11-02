@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/intrabin/intrabin/internal/model"
 )
@@ -100,7 +99,7 @@ func (s *Store) CreateMonitor(ctx context.Context, m *model.Monitor) error {
 	}
 	now := ms(m.CreatedAt)
 	if m.CreatedAt.IsZero() {
-		now = ms(time.Now())
+		now = ms(Now(ctx))
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO monitor_state(monitor_id,status,status_since,updated_at) VALUES(?,?,?,?)`, m.ID, string(status), now, now); err != nil {
 		return err
@@ -290,4 +289,42 @@ func (s *Store) DeleteGroup(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ReplaceSecretBlobs rewrites encrypted monitor secrets in one transaction (node-local key rotation
+// performed before a node founds a cluster). fn returns the new blob for each existing blob.
+func (s *Store) ReplaceSecretBlobs(ctx context.Context, fn func(id string, blob []byte) ([]byte, error)) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT id, secret_settings FROM monitors WHERE secret_settings IS NOT NULL AND length(secret_settings) > 0`)
+	if err != nil {
+		return err
+	}
+	type item struct {
+		id   string
+		blob []byte
+	}
+	var items []item
+	for rows.Next() {
+		var it item
+		if err := rows.Scan(&it.id, &it.blob); err != nil {
+			rows.Close()
+			return err
+		}
+		items = append(items, it)
+	}
+	rows.Close()
+	for _, it := range items {
+		nb, err := fn(it.id, it.blob)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE monitors SET secret_settings=? WHERE id=?`, nb, it.id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

@@ -1,0 +1,12 @@
+# Runtime image from a locally built static binary (same base and hardening as ./Dockerfile).
+# Used by tests/cluster/build_prebuilt.sh when the full multi-stage build is not wanted.
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY intrabin /usr/local/bin/intrabin
+COPY --chown=65532:65532 data /var/lib/intrabin
+ENV INTRABIN_DATA_DIR=/var/lib/intrabin \
+    INTRABIN_LISTEN=:8080
+USER 65532:65532
+EXPOSE 8080 7443
+VOLUME ["/var/lib/intrabin"]
+ENTRYPOINT ["/usr/local/bin/intrabin"]
+CMD ["serve"]

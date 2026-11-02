@@ -30,6 +30,14 @@ type Config struct {
 	MetricsToken   string
 	AllowedHosts   []string
 	ProbeWorkers   int
+
+	// Clustering (Phase 2)
+	ClusterListen    string // cluster port (Raft + peer API, mTLS), e.g. ":7443"
+	ClusterAdvertise string // host:port peers use to reach this node
+	NodeLocation     string // free-form location label (e.g. "fra-1")
+	ClusterInit      bool   // found a cluster on first start if not clustered (automation)
+	JoinToken        string // join a cluster on first start (automation)
+	JoinDataAction   string // "", "export" or "discard" for nodes that already hold data
 }
 
 func env(k, def string) string {
@@ -52,6 +60,24 @@ func Load() (*Config, error) {
 		TLSKey:     os.Getenv("INTRABIN_TLS_KEY"),
 		LogLevel:   env("INTRABIN_LOG_LEVEL", "info"),
 		LogFormat:  env("INTRABIN_LOG_FORMAT", "json"),
+
+		ClusterListen:    env("INTRABIN_CLUSTER_LISTEN", ":7443"),
+		ClusterAdvertise: os.Getenv("INTRABIN_CLUSTER_ADVERTISE"),
+		NodeLocation:     os.Getenv("INTRABIN_NODE_LOCATION"),
+		JoinToken:        os.Getenv("INTRABIN_JOIN_TOKEN"),
+		JoinDataAction:   os.Getenv("INTRABIN_JOIN_DATA_ACTION"),
+	}
+	if v := os.Getenv("INTRABIN_CLUSTER_INIT"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("INTRABIN_CLUSTER_INIT: %w", err)
+		}
+		c.ClusterInit = b
+	}
+	switch c.JoinDataAction {
+	case "", "export", "discard":
+	default:
+		return nil, fmt.Errorf("INTRABIN_JOIN_DATA_ACTION must be export or discard")
 	}
 	if v := os.Getenv("INTRABIN_COOKIE_SECURE"); v != "" {
 		b, err := strconv.ParseBool(v)

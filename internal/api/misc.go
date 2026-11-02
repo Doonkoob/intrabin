@@ -53,23 +53,6 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"node": info})
 }
 
-// handleCluster reports cluster state. In this release every node runs standalone;
-// clustering (Raft) is implemented in Phase 2.
-func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{
-		"mode":           "standalone",
-		"cluster_id":     nil,
-		"leader_id":      s.node.Identity.ID,
-		"quorum":         "not_applicable",
-		"control_plane":  "available",
-		"clustering":     "not_available_in_this_version",
-		"members": []map[string]any{{
-			"node_id": s.node.Identity.ID, "node_name": s.node.Identity.Name, "role": s.node.Role(), "voter": true,
-			"version": node.Version, "status": "online", "self": true,
-		}},
-	})
-}
-
 // ---- groups ----
 
 type groupReq struct {
@@ -128,7 +111,7 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	g := &model.MonitorGroup{ID: uuid.NewString(), Name: req.Name, Description: req.Description, CreatedAt: now, UpdatedAt: now}
-	if err := s.store.CreateGroup(r.Context(), g); err != nil {
+	if err := s.cp.CreateGroup(r.Context(), g); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
@@ -153,7 +136,7 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.Name, g.Description, g.UpdatedAt = req.Name, req.Description, time.Now().UTC()
-	if err := s.store.UpdateGroup(r.Context(), g); err != nil {
+	if err := s.cp.UpdateGroup(r.Context(), g); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
@@ -164,7 +147,7 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	id := r.PathValue("id")
-	if err := s.store.DeleteGroup(r.Context(), id); err != nil {
+	if err := s.cp.DeleteGroup(r.Context(), id); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
@@ -253,9 +236,15 @@ func (s *Server) incidentAction(w http.ResponseWriter, r *http.Request, action s
 	s.handleGetIncident(w, r)
 }
 
-func (s *Server) handleAckIncident(w http.ResponseWriter, r *http.Request)     { s.incidentAction(w, r, "acknowledge") }
-func (s *Server) handleResolveIncident(w http.ResponseWriter, r *http.Request) { s.incidentAction(w, r, "resolve") }
-func (s *Server) handleIncidentNote(w http.ResponseWriter, r *http.Request)    { s.incidentAction(w, r, "note") }
+func (s *Server) handleAckIncident(w http.ResponseWriter, r *http.Request) {
+	s.incidentAction(w, r, "acknowledge")
+}
+func (s *Server) handleResolveIncident(w http.ResponseWriter, r *http.Request) {
+	s.incidentAction(w, r, "resolve")
+}
+func (s *Server) handleIncidentNote(w http.ResponseWriter, r *http.Request) {
+	s.incidentAction(w, r, "note")
+}
 
 // ---- maintenance ----
 
@@ -302,7 +291,7 @@ func (s *Server) handleCreateMaintenance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	mw := &model.MaintenanceWindow{ID: uuid.NewString(), MonitorID: req.MonitorID, Title: req.Title, StartsAt: req.StartsAt.UTC(), EndsAt: req.EndsAt.UTC(), CreatedBy: p.User.Username, CreatedAt: time.Now().UTC()}
-	if err := s.store.CreateMaintenance(r.Context(), mw); err != nil {
+	if err := s.cp.CreateMaintenance(r.Context(), mw); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
@@ -313,7 +302,7 @@ func (s *Server) handleCreateMaintenance(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleDeleteMaintenance(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	id := r.PathValue("id")
-	if err := s.store.DeleteMaintenance(r.Context(), id); err != nil {
+	if err := s.cp.DeleteMaintenance(r.Context(), id); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
@@ -425,7 +414,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for k, v := range set {
-		if err := s.store.SetSetting(r.Context(), k, v); err != nil {
+		if err := s.cp.SetSetting(r.Context(), k, v); err != nil {
 			s.writeErr(w, r, err)
 			return
 		}
@@ -510,8 +499,8 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{
-		"monitors": map[string]any{"total": len(ms), "by_status": counts, "list": list},
-		"incidents": map[string]any{"open": len(open), "open_list": open, "recent": recent},
+		"monitors":       map[string]any{"total": len(ms), "by_status": counts, "list": list},
+		"incidents":      map[string]any{"open": len(open), "open_list": open, "recent": recent},
 		"uptime_24h_avg": avgUptime,
 		"latency_24h":    latency,
 		"health_30d":     health,

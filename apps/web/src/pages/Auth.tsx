@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import { ApiError, get, post } from '../api'
 import { usePrefs, useSession } from '../app'
-import { Button, ErrorBanner, Field, Input, Select } from '../components/ui'
+import { Button, ErrorBanner, Field, Input, Select, Textarea } from '../components/ui'
 import { Logo, PrefControls } from '../components/Layout'
 
 function Shell({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
@@ -62,7 +62,59 @@ export function LoginPage({ instanceName }: { instanceName: string }) {
   )
 }
 
+function JoinSetup({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const { t } = usePrefs()
+  const [form, setForm] = useState({ setup_token: '', token: '', advertise: '' })
+  const [fields, setFields] = useState<Record<string, string>>({})
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    setFields({})
+    try {
+      await post('/setup/join', form)
+      setDone(true)
+      window.setTimeout(onDone, 1500)
+    } catch (err) {
+      const ae = err as ApiError
+      setFields(ae.fields)
+      if (!Object.keys(ae.fields).length) setError(ae.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Shell title={t('setup.joinTitle')} subtitle={t('setup.joinSubtitle')}>
+      {done ? <p role="status" className="text-sm text-up">{t('setup.joined')}</p> : (
+        <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
+          {error && <ErrorBanner error={error} />}
+          <Field label={t('setup.token')} htmlFor="setup_token" help={t('setup.tokenHelp')} error={fields.setup_token}>
+            <Input id="setup_token" className="ltr font-mono" value={form.setup_token} onChange={(e) => setForm({ ...form, setup_token: e.target.value })} invalid={!!fields.setup_token} autoComplete="off" required />
+          </Field>
+          <Field label={t('cluster.joinToken')} htmlFor="join_token" error={fields.token}>
+            <Textarea id="join_token" className="ltr h-24 font-mono text-xs" value={form.token} onChange={(e) => setForm({ ...form, token: e.target.value })} invalid={!!fields.token} required />
+          </Field>
+          <Field label={t('cluster.advertise')} htmlFor="advertise" help={t('cluster.advertiseHelp')}>
+            <Input id="advertise" className="ltr font-mono" value={form.advertise} onChange={(e) => setForm({ ...form, advertise: e.target.value })} placeholder="10.0.0.12:7443" />
+          </Field>
+          <Button type="submit" variant="primary" loading={busy} className="w-full">{t('setup.joinSubmit')}</Button>
+          <button type="button" className="text-sm text-accent hover:underline" onClick={onCancel}>{t('setup.createInstead')}</button>
+        </form>
+      )}
+    </Shell>
+  )
+}
+
 export function SetupPage({ onDone }: { onDone: () => void }) {
+  const [join, setJoin] = useState(false)
+  if (join) return <JoinSetup onDone={onDone} onCancel={() => setJoin(false)} />
+  return <CreateSetup onDone={onDone} onJoin={() => setJoin(true)} />
+}
+
+function CreateSetup({ onDone, onJoin }: { onDone: () => void; onJoin: () => void }) {
   const { t, lang, setLang } = usePrefs()
   const { refresh } = useSession()
   const navigate = useNavigate()
@@ -118,6 +170,7 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
         </Field>
         <p className="rounded-lg bg-surface-2 p-3 text-xs text-muted">{t('setup.mode')}</p>
         <Button type="submit" variant="primary" loading={busy} className="w-full">{t('setup.submit')}</Button>
+        <button type="button" className="text-sm text-accent hover:underline" onClick={onJoin} data-testid="setup-join">{t('setup.joinInstead')}</button>
       </form>
     </Shell>
   )

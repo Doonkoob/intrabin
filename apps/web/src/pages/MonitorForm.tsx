@@ -6,7 +6,7 @@ import { usePrefs } from '../app'
 import { useApi } from '../hooks'
 import { fmtDuration, fmtNumber } from '../format'
 import { Button, Card, Checkbox, ErrorBanner, Field, Input, PageHeader, Select, Spinner, Textarea } from '../components/ui'
-import type { Group, Monitor, Policy } from '../types'
+import type { ClusterStatus, Group, Monitor, Policy } from '../types'
 import type { Key } from '../i18n'
 
 interface FormState {
@@ -41,6 +41,7 @@ interface FormState {
   basic_auth_user: string
   basic_auth_password: string
   clear_secrets: boolean
+  node_ids: string[]
 }
 
 const defaults: FormState = {
@@ -48,7 +49,7 @@ const defaults: FormState = {
   method: 'GET', headers: '', body: '', expected_status: '', expected_body: '', follow_redirects: true, skip_tls_verify: false, degraded_latency_ms: 0,
   cert_expiry_fail_days: 0, cert_expiry_warn_days: 0, record_type: 'A', expected_value: '', resolver: '', check_path: 'public', origin_address: '', host_header: '', tls_server_name: '',
   policy: { confirmations_required: 1, min_locations: 1, min_valid_probes: 1, fail_mode: 'consecutive', failure_rounds: 3, window_seconds: 0, recovery_rounds: 2, cooldown_seconds: 300 },
-  basic_auth_user: '', basic_auth_password: '', clear_secrets: false,
+  basic_auth_user: '', basic_auth_password: '', clear_secrets: false, node_ids: [],
 }
 
 function fromMonitor(m: Monitor): FormState {
@@ -63,6 +64,7 @@ function fromMonitor(m: Monitor): FormState {
     cert_expiry_warn_days: s.cert_expiry_warn_days ?? 0, record_type: s.record_type || 'A', expected_value: s.expected_value ?? '', resolver: s.resolver ?? '',
     check_path: s.check_path || 'public', origin_address: s.origin_address ?? '', host_header: s.host_header ?? '', tls_server_name: s.tls_server_name ?? '',
     policy: { ...defaults.policy, ...m.policy },
+    node_ids: m.node_ids ?? [],
   }
 }
 
@@ -90,7 +92,7 @@ function toPayload(f: FormState) {
     tags: f.tags.split(',').map((s) => s.trim()).filter(Boolean),
     interval_seconds: Number(f.interval_seconds), timeout_seconds: Number(f.timeout_seconds), retries: Number(f.retries),
     settings, policy: { ...f.policy, window_seconds: f.policy.fail_mode === 'window' ? Number(f.policy.window_seconds) : 0 },
-    secrets, clear_secrets: f.clear_secrets,
+    secrets, clear_secrets: f.clear_secrets, node_ids: f.node_ids,
   }
 }
 
@@ -117,6 +119,8 @@ export function MonitorFormPage() {
   const [testing, setTesting] = useState(false)
   const [test, setTest] = useState<{ success: boolean; latency_ms: number; http_status?: number; error_category: string; message: string } | null>(null)
   const groups = useApi<{ groups: Group[] }>('/monitor-groups')
+  const cluster = useApi<{ cluster: ClusterStatus }>('/cluster')
+  const members = cluster.data?.cluster.enabled ? cluster.data.cluster.members : []
 
   useEffect(() => {
     if (!id) return
@@ -282,6 +286,20 @@ export function MonitorFormPage() {
           <Field label={t('mform.cooldown')} htmlFor="cooldown" error={err('policy.cooldown_seconds')}><Input id="cooldown" type="number" min={0} value={f.policy.cooldown_seconds} onChange={(e) => setP('cooldown_seconds', Number(e.target.value))} /></Field>
           <p className="rounded-lg bg-accent-soft p-3 text-sm text-fg sm:col-span-2" data-testid="policy-summary">{summary}</p>
         </Section>
+
+        {members.length > 1 && (
+          <Section title={t('mform.nodes')} help={t('mform.nodesHelp')}>
+            <fieldset className="flex flex-col gap-2 sm:col-span-2" data-testid="node-selector">
+              <legend className="sr-only">{t('mform.nodes')}</legend>
+              <Checkbox label={t('mform.allNodes')} checked={f.node_ids.length === 0} onChange={(v) => set('node_ids', v ? [] : members.map((m) => m.id))} />
+              {f.node_ids.length > 0 && members.map((m) => (
+                <Checkbox key={m.id} label={`${m.name}${m.location ? ` · ${m.location}` : ''}`} checked={f.node_ids.includes(m.id)}
+                  onChange={(v) => set('node_ids', v ? [...f.node_ids, m.id] : f.node_ids.filter((x) => x !== m.id))} />
+              ))}
+              {err('node_ids') && <p className="text-sm text-down">{err('node_ids')}</p>}
+            </fieldset>
+          </Section>
+        )}
 
         {(f.type === 'http' || f.type === 'tls') && (
           <Section title={t('mform.advanced')}>

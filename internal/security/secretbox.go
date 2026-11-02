@@ -11,51 +11,64 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
 
 // SecretBox encrypts small secrets at rest with AES-256-GCM.
 // Ciphertext format: version(1) || nonce(12) || ciphertext+tag.
 type SecretBox struct {
-	aead cipher.AEAD
+	aead atomic.Pointer[cipher.AEAD]
 }
 
 const secretBoxVersion = 1
 
 // NewSecretBox creates a SecretBox from a 32-byte key.
 func NewSecretBox(key []byte) (*SecretBox, error) {
+	s := &SecretBox{}
+	if err := s.SetKey(key); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// SetKey replaces the data key (used when a node switches to the cluster data key).
+func (s *SecretBox) SetKey(key []byte) error {
 	if len(key) != 32 {
-		return nil, errors.New("master key must be 32 bytes")
+		return errors.New("key must be 32 bytes")
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return &SecretBox{aead: aead}, nil
+	s.aead.Store(&aead)
+	return nil
 }
 
 // Seal encrypts plaintext; aad binds the ciphertext to a context (e.g. record id).
 func (s *SecretBox) Seal(plaintext, aad []byte) ([]byte, error) {
-	nonce := make([]byte, s.aead.NonceSize())
+	aead := *s.aead.Load()
+	nonce := make([]byte, aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	out := make([]byte, 0, 1+len(nonce)+len(plaintext)+s.aead.Overhead())
+	out := make([]byte, 0, 1+len(nonce)+len(plaintext)+aead.Overhead())
 	out = append(out, secretBoxVersion)
 	out = append(out, nonce...)
-	return s.aead.Seal(out, nonce, plaintext, aad), nil
+	return aead.Seal(out, nonce, plaintext, aad), nil
 }
 
 // Open decrypts ciphertext produced by Seal.
 func (s *SecretBox) Open(ciphertext, aad []byte) ([]byte, error) {
-	ns := s.aead.NonceSize()
-	if len(ciphertext) < 1+ns+s.aead.Overhead() || ciphertext[0] != secretBoxVersion {
+	aead := *s.aead.Load()
+	ns := aead.NonceSize()
+	if len(ciphertext) < 1+ns+aead.Overhead() || ciphertext[0] != secretBoxVersion {
 		return nil, errors.New("invalid ciphertext")
 	}
-	pt, err := s.aead.Open(nil, ciphertext[1:1+ns], ciphertext[1+ns:], aad)
+	pt, err := aead.Open(nil, ciphertext[1:1+ns], ciphertext[1+ns:], aad)
 	if err != nil {
 		return nil, errors.New("decryption failed (wrong master key or corrupted data)")
 	}
