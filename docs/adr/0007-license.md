@@ -1,6 +1,7 @@
-# ADR-0007: Apache-2.0 license
+# ADR-0007: MIT license
 
-Status: Accepted
+Status: Accepted (supersedes the earlier Apache-2.0 choice)
 
-Apache-2.0 is permissive, includes an explicit patent grant, and is compatible with all chosen
-dependencies (MIT/BSD/MPL-2.0 for hashicorp/raft, used unmodified as a library).
+The project is published at github.com/Doonkoob/intrabin, whose owner chose the MIT license.
+MIT is permissive and compatible with all chosen dependencies (MIT/BSD/Apache-2.0, and MPL-2.0 for
+hashicorp/raft, used unmodified as a library).

@@ -7,10 +7,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -44,13 +47,17 @@ func main() {
 			os.Exit(resetPassword(os.Args[2:]))
 		case "backup":
 			os.Exit(backup(os.Args[2:]))
+		case "rename-user":
+			os.Exit(renameUser(os.Args[2:]))
+		case "list-users":
+			os.Exit(listUsers())
 		case "runner":
 			os.Exit(runRunner())
 		case "runner-exec":
 			os.Exit(runner.ExecWrapper(os.Args[2:]))
 		case "serve":
 		default:
-			fmt.Fprintf(os.Stderr, "usage: intrabin [serve|runner|healthcheck|version|reset-password|backup]\n")
+			fmt.Fprintf(os.Stderr, "usage: intrabin [serve|runner|healthcheck|version|reset-password|rename-user|list-users|backup]\n")
 			os.Exit(2)
 		}
 	}
@@ -364,9 +371,92 @@ func resetPassword(args []string) int {
 	return 0
 }
 
+var usernameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{2,63}$`)
+
+// openLocalStore opens the database for an offline CLI command on a standalone node.
+func openLocalStore(ctx context.Context) (*storage.Store, int) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return nil, 1
+	}
+	store, err := storage.Open(ctx, cfg.DataDir+"/intrabin.db")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return nil, 1
+	}
+	if mode, _ := store.GetSetting(ctx, "local.cluster_mode"); mode == "1" {
+		store.Close()
+		fmt.Fprintln(os.Stderr, "this node is a cluster member: change users in the UI on the leader so the change is replicated.")
+		return nil, 1
+	}
+	return store, 0
+}
+
+func renameUser(args []string) int {
+	fs := flag.NewFlagSet("rename-user", flag.ExitOnError)
+	user := fs.String("user", "", "current username")
+	to := fs.String("to", "", "new username")
+	_ = fs.Parse(args)
+	if *user == "" || !usernameRe.MatchString(*to) {
+		fmt.Fprintln(os.Stderr, "usage: intrabin rename-user -user <current> -to <new>  (3-64 chars: letters, digits, . _ -)")
+		return 2
+	}
+	ctx := context.Background()
+	store, code := openLocalStore(ctx)
+	if store == nil {
+		return code
+	}
+	defer store.Close()
+	u, err := store.GetUserByUsername(ctx, *user)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "user not found")
+		return 1
+	}
+	if err := store.RenameUser(ctx, u.ID, *to); err != nil {
+		if errors.Is(err, storage.ErrConflict) {
+			fmt.Fprintln(os.Stderr, "that username is already taken")
+		} else {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		return 1
+	}
+	audit.New(store, slog.Default()).Record(ctx, audit.Actor{Name: "cli"}, "user.rename_cli", "user", u.ID, "", map[string]any{"from": *user, "to": *to})
+	fmt.Println("username changed to", *to)
+	return 0
+}
+
+func listUsers() int {
+	ctx := context.Background()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	store, err := storage.Open(ctx, cfg.DataDir+"/intrabin.db")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer store.Close()
+	us, err := store.ListUsers(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	for _, u := range us {
+		state := "active"
+		if u.Disabled {
+			state = "disabled"
+		}
+		fmt.Printf("%-24s %-9s %s\n", u.Username, u.Role, state)
+	}
+	return 0
+}
+
 func backup(args []string) int {
 	fs := flag.NewFlagSet("backup", flag.ExitOnError)
-	out := fs.String("out", "", "destination file (must not exist)")
+	out := fs.String("out", "", "destination file (must not exist), or - for stdout")
 	_ = fs.Parse(args)
 	if *out == "" {
 		fmt.Fprintln(os.Stderr, "usage: intrabin backup -out /data/backups/intrabin-YYYYMMDD.db")
@@ -384,6 +474,27 @@ func backup(args []string) int {
 		return 1
 	}
 	defer store.Close()
+	if *out == "-" {
+		// Stream a consistent copy to stdout (used by the management CLI with `docker compose exec`;
+		// the runtime image has no shell to copy or delete files with).
+		tmp := filepath.Join(cfg.DataDir, fmt.Sprintf(".backup-%d.db", time.Now().UnixNano()))
+		defer os.Remove(tmp)
+		if err := store.Backup(ctx, tmp); err != nil {
+			fmt.Fprintln(os.Stderr, "backup failed:", err)
+			return 1
+		}
+		f, err := os.Open(tmp)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "backup failed:", err)
+			return 1
+		}
+		defer f.Close()
+		if _, err := io.Copy(os.Stdout, f); err != nil {
+			fmt.Fprintln(os.Stderr, "backup failed:", err)
+			return 1
+		}
+		return 0
+	}
 	if err := store.Backup(ctx, *out); err != nil {
 		fmt.Fprintln(os.Stderr, "backup failed:", err)
 		return 1

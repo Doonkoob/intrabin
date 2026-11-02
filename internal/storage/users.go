@@ -189,3 +189,15 @@ func (s *Store) DeleteExpiredSessions(ctx context.Context, now time.Time, idle t
 	}
 	return res.RowsAffected()
 }
+
+// RenameUser changes a user's login name (offline CLI use). ErrConflict if the name is taken.
+func (s *Store) RenameUser(ctx context.Context, id, username string) error {
+	res, err := s.DB.ExecContext(ctx, `UPDATE users SET username=?, updated_at=? WHERE id=?`, username, ms(Now(ctx)), id)
+	if err != nil {
+		return mapConflict(err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

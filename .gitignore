@@ -13,3 +13,8 @@ master.key
 /test-results/
 /playwright-report/
 coverage.out
+/deploy/Caddyfile
+/backups/
+/.install-info
+/compose.override.yaml
+/intrabin

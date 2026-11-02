@@ -10,4 +10,4 @@
 * Do not run tests against real cloud accounts or production infrastructure; use mocks.
 * Security issues: please report privately to the maintainers instead of opening a public issue.
 
-By contributing you agree that your contributions are licensed under Apache-2.0.
+By contributing you agree that your contributions are licensed under the MIT license.

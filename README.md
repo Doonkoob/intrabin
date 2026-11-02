@@ -34,9 +34,49 @@ multi-location monitoring with automatic leader failover.
   by reading the zone back. See [docs/operations/dns.md](docs/operations/dns.md).
 * Prometheus metrics, structured JSON logs, health/readiness endpoints, OpenAPI spec at `/api/v1/openapi.yaml`.
 
-## Quick start (Docker Compose)
+## Install on Ubuntu (one command)
+On a fresh Ubuntu 20.04 / 22.04 / 24.04 server (amd64 or arm64), as **root**:
+
 ```bash
-git clone <this repository> intrabin && cd intrabin
+bash <(curl -fsSL https://raw.githubusercontent.com/Doonkoob/intrabin/main/scripts/install.sh)
+```
+
+The installer detects the OS version, installs Docker and Docker Compose if they are missing,
+clones Intrabin to `/opt/intrabin`, asks for an optional domain (HTTPS with a free Let's Encrypt
+certificate that renews automatically; the domain's A record must point to the server), builds and
+starts the containers, and prints the URL with a **randomly generated** owner username and password.
+Without a domain it serves plain HTTP on port 8080. Running the same command again updates an
+existing installation. Non-interactive example:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Doonkoob/intrabin/main/scripts/install.sh) \
+  --yes --domain status.example.com --email ops@example.com
+```
+
+Other options: `--no-domain`, `--no-runner`, `--docker-mirror URL`, `--goproxy URL`,
+`--npm-registry URL` (for restricted networks), `--dir`, `--branch`; see `install.sh --help`.
+
+### Management menu
+After installation run **`intrabin`** for an interactive menu (service status, start/stop/restart,
+logs, change password or username, list users, set or change the domain and SSL, enable or disable
+the Action Runner, backup, update, uninstall). Every item is also a direct command, for example
+`intrabin status`, `intrabin password`, `intrabin backup`, `intrabin update`.
+
+### نصب سریع (فارسی)
+روی سرور اوبونتو با کاربر root این دستور را اجرا کنید:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Doonkoob/intrabin/main/scripts/install.sh)
+```
+
+اسکریپت نسخهٔ سیستم‌عامل را تشخیص می‌دهد، Docker و Docker Compose را در صورت نبودن نصب می‌کند،
+در صورت تمایل دامنه می‌گیرد و گواهی SSL را با تمدید خودکار فعال می‌کند، سرویس‌ها را اجرا می‌کند و
+در پایان آدرس، نام کاربری و رمز عبور تصادفی را نمایش می‌دهد. پس از نصب با دستور `intrabin` منوی
+مدیریت (وضعیت سرویس، تغییر رمز و نام کاربری، دامنه، پشتیبان‌گیری، به‌روزرسانی و …) باز می‌شود.
+
+## Manual install (Docker Compose)
+```bash
+git clone https://github.com/Doonkoob/intrabin.git && cd intrabin
 cp .env.example .env
 docker compose up -d --build
 docker compose logs intrabin | grep setup_token     # one-time setup token
@@ -82,4 +122,4 @@ tests/dnsmock/         fake DNS provider server for UI tests and demos
 ```
 
 ## License
-Apache-2.0 — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).

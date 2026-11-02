@@ -1,6 +1,9 @@
 # Intrabin — single-node production deployment.
+#   One-command install on Ubuntu: see README (scripts/install.sh), or manually:
 #   cp .env.example .env && docker compose up -d
 #   docker compose logs intrabin | grep setup_token
+# Optional profiles (COMPOSE_PROFILES in .env): "proxy" (Caddy with automatic HTTPS for
+# INTRABIN_DOMAIN), "automation" (isolated Action Runner).
 name: intrabin
 
 services:
@@ -10,6 +13,8 @@ services:
       context: .
       args:
         VERSION: ${INTRABIN_VERSION:-dev}
+        GOPROXY_URL: ${GOPROXY_URL:-}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
     restart: unless-stopped
     env_file: .env
     environment:
@@ -52,6 +57,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.runner
+      args:
+        GOPROXY_URL: ${GOPROXY_URL:-}
     restart: unless-stopped
     environment:
       INTRABIN_RUNNER_TOKEN: ${INTRABIN_RUNNER_TOKEN:-}  # required (>= 24 chars); the runner refuses to start without it
@@ -65,13 +72,44 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
-    pids_limit: 256
     deploy:
       resources:
         limits:
           cpus: "1.0"
           memory: 768m
+          pids: 256
+
+  # Optional TLS reverse proxy with automatic Let's Encrypt certificates and renewal:
+  # set INTRABIN_DOMAIN, generate deploy/Caddyfile (scripts/install.sh does both) and
+  #   docker compose --profile proxy up -d
+  caddy:
+    profiles: [proxy]
+    image: ${CADDY_IMAGE:-caddy:2.10-alpine}
+    restart: unless-stopped
+    depends_on: [intrabin]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   intrabin-data:
   runner-data:
+  caddy-data:
+  caddy-config:

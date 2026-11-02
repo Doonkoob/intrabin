@@ -6,10 +6,13 @@ ARG RUNTIME_BASE=python:3.13-slim-bookworm
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 ARG TARGETOS TARGETARCH
 ARG VERSION=dev
+# Optional Go module proxy for restricted networks, e.g. --build-arg GOPROXY_URL=https://goproxy.io,direct
+ARG GOPROXY_URL=
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then cat /etc/ssl/certs/ca-certificates.crt /run/secrets/extra_ca > /tmp/ca.pem; export SSL_CERT_FILE=/tmp/ca.pem; fi; \
+    if [ -n "$GOPROXY_URL" ]; then export GOPROXY="$GOPROXY_URL"; fi; \
     go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
@@ -18,8 +21,8 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
 
 FROM ${RUNTIME_BASE}
 LABEL org.opencontainers.image.title="Intrabin Action Runner" \
-      org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.source="https://github.com/intrabin/intrabin"
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.source="https://github.com/Doonkoob/intrabin"
 RUN groupadd --gid 10001 runner && useradd --uid 10001 --gid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin --no-create-home runner \
     && mkdir -p /var/lib/intrabin-runner && chown 10001:10001 /var/lib/intrabin-runner && chmod 0700 /var/lib/intrabin-runner
 COPY --from=build /out/intrabin /usr/local/bin/intrabin
