@@ -90,6 +90,9 @@ type Status struct {
 	StartedAt  string `json:"started_at"`
 	FinishedAt string `json:"finished_at,omitempty"`
 	Message    string `json:"message"`
+	Progress   *int   `json:"progress,omitempty"` // completed deployment milestones; nil for old agents
+	Stage      string `json:"stage,omitempty"`
+	Service    string `json:"service,omitempty"`
 }
 
 // State is what the UI shows.

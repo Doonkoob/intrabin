@@ -187,12 +187,15 @@ func TestRequestWritesFileForAgent(t *testing.T) {
 
 	// The agent picked it up and reports progress.
 	_ = os.Remove(filepath.Join(dir, "request"))
-	status := `{"state":"failed","target":"v1.3.0","from":"v1.2.0","started_at":"2026-11-16T12:00:00Z","finished_at":"2026-11-16T12:03:00Z","message":"image pull failed"}`
+	status := `{"state":"failed","target":"v1.3.0","from":"v1.2.0","started_at":"2026-11-16T12:00:00Z","finished_at":"2026-11-16T12:03:00Z","message":"image pull failed","progress":57,"stage":"pulling","service":"runner"}`
 	_ = os.WriteFile(filepath.Join(dir, "status.json"), []byte(status), 0o644)
 	_ = os.WriteFile(filepath.Join(dir, "update.log"), []byte("pulling…\nerror: denied\n"), 0o644)
 	st = s.State(ctx)
 	if st.Status == nil || st.Status.State != "failed" || !strings.Contains(st.Log, "denied") || !st.ShowBanner {
 		t.Fatalf("status not reported: %+v", st)
+	}
+	if st.Status.Progress == nil || *st.Status.Progress != 57 || st.Status.Stage != "pulling" || st.Status.Service != "runner" {
+		t.Fatalf("agent progress not returned: %+v", st.Status)
 	}
 	if err := s.Request(ctx, "v1.3.0", "admin"); err != nil {
 		t.Fatalf("retry after a failed update: %v", err)

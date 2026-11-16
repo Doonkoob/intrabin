@@ -14,6 +14,7 @@ _Last updated: 2026-11-16. Keep this file accurate: a feature is "done" only whe
 | 6 — Hardening & release | Partial (CI workflow, docs, MIT license, one-command Ubuntu installer + management CLI, backup/restore commands, release images; plus per-node latency, SSL overview, retention presets and condition triggers) |
 
 ## v0.2.0 additions
+* Installer and updates build/pull each service separately, with serial container startup and no implicit startup builds. Phase/service progress is reported by the host agent and shown in the update dialog, Settings and cluster rollout. Shell tests cover sequencing/failure/progress; CI also exercises real Compose with a temporary project.
 * Monitor details: node column and node filter for recent checks; multi-line per-node latency chart, failure/missing-data gaps, raw short-range results and replicated hourly long-range history.
 * Cluster updates: durable Raft rollout plan, leader first then one member at a time, current-leader mTLS dispatch tied to the active plan, pinned stable release verification on each node, progress and retry in Settings. All members must first be upgraded once to v0.2.0 and have the installer host agent. Failed installations stop the rollout.
 * Release history in Settings; VERSION, CHANGELOG and per-version release notes; release workflow validates the version and publishes notes after images. App and runner get the release version.

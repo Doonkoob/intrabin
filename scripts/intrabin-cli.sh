@@ -26,7 +26,7 @@ die() { err "$*"; exit 1; }
 [[ -f "$ENV_FILE" && -f "$INSTALL_DIR/compose.yaml" ]] || die "no Intrabin installation found in $INSTALL_DIR (set INTRABIN_DIR)"
 cd "$INSTALL_DIR"
 
-dc() { docker compose "$@"; }
+source "$INSTALL_DIR/scripts/compose-serial.sh"
 get_env() { grep -E "^${1}=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true; }
 set_env() {
   local k="$1" v="$2" tmp
@@ -97,9 +97,34 @@ write_agent_info() {
   printf '{"agent":1,"mode":"%s"}\n' "$mode" | write_shared agent.json
 }
 
-update_status() { # state target from started_at message [finished_at]
-  printf '{"state":"%s","target":"%s","from":"%s","started_at":"%s","finished_at":"%s","message":"%s"}\n' \
-    "$1" "$2" "$3" "$4" "${6:-}" "$(json_str "$5")" | write_shared status.json
+update_status() { # state target from started_at message [finished_at progress stage service]
+  printf '{"state":"%s","target":"%s","from":"%s","started_at":"%s","finished_at":"%s","message":"%s","progress":%s,"stage":"%s","service":"%s"}\n' \
+    "$1" "$2" "$3" "$4" "${6:-}" "$(json_str "$5")" "${7:-0}" "${8:-queued}" "$(json_str "${9:-}")" | write_shared status.json
+}
+
+update_progress() { # stage percent [service]
+  [[ -n "${UPDATE_TARGET:-}" ]] || return 0
+  UPDATE_STAGE="$1"; UPDATE_PROGRESS="$2"; UPDATE_SERVICE="${3:-}"
+  update_status running "$UPDATE_TARGET" "$UPDATE_FROM" "$UPDATE_STARTED_AT" "$UPDATE_STAGE" "" "$UPDATE_PROGRESS" "$UPDATE_STAGE" "$UPDATE_SERVICE"
+}
+
+compose_serial_progress() { # action service completed total
+  local stage percent
+  case "$1" in
+    build) stage=building; percent=$((35 + $3 * 45 / $4)) ;;
+    pull) stage=pulling; percent=$((35 + $3 * 45 / $4)) ;;
+    restart) stage=restarting; percent=$((80 + $3 * 15 / $4)) ;;
+  esac
+  update_progress "$stage" "$percent" "$2"
+}
+
+finish_agent_update() {
+  local rc="$1"
+  if [[ $rc -eq 0 ]]; then
+    update_status succeeded "$UPDATE_TARGET" "$UPDATE_FROM" "$UPDATE_STARTED_AT" "Updated to $UPDATE_TARGET." "$(now_utc)" 100 complete
+  else
+    update_status failed "$UPDATE_TARGET" "$UPDATE_FROM" "$UPDATE_STARTED_AT" "Update failed; see the log for recovery details." "$(now_utc)" "$UPDATE_PROGRESS" "$UPDATE_STAGE" "$UPDATE_SERVICE"
+  fi
 }
 
 wait_healthy() { # wait_healthy VERSION
@@ -126,9 +151,12 @@ update_rollback() { # branch head message
 update_to_tag() {
   local tag="$1" backup="${2:-yes}" prev_head prev_branch img rimg
   valid_tag "$tag" || die "invalid version: $tag (expected e.g. v1.2.0)"
+  update_progress fetching 5
   echo "==> Fetching $tag from $(git remote get-url origin)"
   git fetch --depth 1 -q origin "refs/tags/$tag" || die "release $tag was not found"
+  update_progress backup 15
   if [[ "$backup" == "yes" ]] && running; then echo "==> Backing up"; cmd_backup; fi
+  update_progress backup 30
   prev_head=$(git rev-parse HEAD)
   prev_branch=$(git rev-parse --abbrev-ref HEAD)
   cp -p "$ENV_FILE" "$ENV_FILE.pre-update"
@@ -142,13 +170,14 @@ update_to_tag() {
     rimg=$(get_env INTRABIN_RUNNER_IMAGE)
     [[ -n "$rimg" ]] && set_env INTRABIN_RUNNER_IMAGE "${rimg%:*}:$tag"
     echo "==> Pulling the $tag images"
-    dc pull || update_rollback "$prev_branch" "$prev_head" "could not pull the $tag images"
+    compose_serial_images pull || update_rollback "$prev_branch" "$prev_head" "could not pull the $tag images"
   else
     echo "==> Building $tag (this takes a few minutes)"
-    dc build || update_rollback "$prev_branch" "$prev_head" "the image build failed"
+    compose_serial_images build || update_rollback "$prev_branch" "$prev_head" "the image build failed"
   fi
   echo "==> Restarting with $tag"
-  dc up -d --remove-orphans || die "could not start the containers (see: intrabin logs)"
+  compose_serial_up || die "could not start the containers (see: intrabin logs)"
+  update_progress health 95
   wait_healthy "$tag" || die "Intrabin did not report version $tag within 3 minutes (see: intrabin logs)"
   rm -f "$ENV_FILE.pre-update"
   ok "updated to $tag"
@@ -385,8 +414,8 @@ cmd_update() {
   chmod +x scripts/*.sh
   set_env INTRABIN_VERSION "$after"
   write_caddyfile
-  dc build
-  dc up -d --remove-orphans
+  compose_serial_images build
+  compose_serial_up
   ok "updated $before → $after"
 }
 
@@ -412,15 +441,15 @@ cmd_apply_update() {
   fi
   update_status running "$tag" "$from" "$started" "Backing up, then installing $tag."
   echo "Updating $from → $tag (requested from the web UI)"
-  # A background subshell keeps `set -e` active inside update_to_tag.
-  ( update_to_tag "$tag" ) >"$log" 2>&1 &
+  # Keep progress and the EXIT trap in the same shell, including on build/health failures.
+  (
+    UPDATE_TARGET="$tag"; UPDATE_FROM="$from"; UPDATE_STARTED_AT="$started"
+    UPDATE_PROGRESS=0; UPDATE_STAGE=queued; UPDATE_SERVICE=""
+    trap 'finish_agent_update "$?"' EXIT
+    update_to_tag "$tag"
+  ) >"$log" 2>&1 &
   wait $! || rc=$?
   tail -c 65536 "$log" | write_shared update.log
-  if [[ $rc -eq 0 ]]; then
-    update_status succeeded "$tag" "$from" "$started" "Updated to $tag." "$(now_utc)"
-  else
-    update_status failed "$tag" "$from" "$started" "see the log below; your data was not changed." "$(now_utc)"
-  fi
   write_agent_info
   cat "$log"
   return $rc

@@ -37,6 +37,9 @@ type RolloutNode struct {
 	Error             string    `json:"error,omitempty"`
 	StartedAt         time.Time `json:"started_at,omitempty"`
 	PreviousStartedAt string    `json:"previous_started_at,omitempty"`
+	Progress          *int      `json:"progress,omitempty"`
+	Stage             string    `json:"stage,omitempty"`
+	Service           string    `json:"service,omitempty"`
 }
 
 type RolloutPlan struct {
@@ -216,6 +219,19 @@ func (c *Rollout) Step(ctx context.Context) {
 			return
 		}
 		n.Version = st.Current
+		if st.Status != nil && st.Status.Target == p.Version && st.Status.StartedAt != n.PreviousStartedAt {
+			status := st.Status
+			changed := (n.Progress == nil) != (status.Progress == nil) || n.Stage != status.Stage || n.Service != status.Service
+			if n.Progress != nil && status.Progress != nil && *n.Progress != *status.Progress {
+				changed = true
+			}
+			if changed {
+				n.Progress, n.Stage, n.Service = status.Progress, status.Stage, status.Service
+				if c.save(ctx, p) != nil {
+					return
+				}
+			}
+		}
 		if st.Pending && st.PendingVersion != "" && st.PendingVersion != p.Version {
 			fail(n, errors.New("another version is queued on this node"))
 			return
@@ -230,6 +246,8 @@ func (c *Rollout) Step(ctx context.Context) {
 				return
 			}
 			n.State, n.Error = "succeeded", ""
+			complete := 100
+			n.Progress, n.Stage, n.Service = &complete, "complete", ""
 			_ = c.save(ctx, p)
 			return
 		}
@@ -261,6 +279,7 @@ func (c *Rollout) Step(ctx context.Context) {
 		}
 		if n.State != "updating" {
 			n.State, n.StartedAt = "updating", time.Now().UTC()
+			n.Progress, n.Stage, n.Service = nil, "queued", ""
 			if st.Status != nil {
 				n.PreviousStartedAt = st.Status.StartedAt
 			}

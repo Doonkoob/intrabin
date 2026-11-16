@@ -3,9 +3,9 @@ import { ArrowUpCircle, CheckCircle2, ExternalLink, Loader2, RefreshCw, X } from
 import { ApiError, get, post } from '../api'
 import { usePrefs, useSession } from '../app'
 import { useApi } from '../hooks'
-import { fmtDateTime, fmtRelative } from '../format'
+import { fmtDateTime, fmtNumber, fmtRelative } from '../format'
 import { Button, Card, Dialog, ErrorBanner, Spinner } from './ui'
-import type { UpdateState } from '../types'
+import type { UpdateState, UpdateRunStatus } from '../types'
 import type { Key } from '../i18n'
 
 type Phase = 'confirm' | 'running' | 'done' | 'failed'
@@ -14,16 +14,33 @@ function inProgress(s: UpdateState) {
   return s.pending || s.status?.state === 'running'
 }
 
+function UpdateProgressBar({ value, stage, service, failed = false, label }: { value?: number; stage?: string; service?: string; failed?: boolean; label?: string }) {
+  const { t, loc } = usePrefs()
+  const percent = value === undefined ? undefined : Math.max(0, Math.min(100, Math.round(value)))
+  const stages = ['queued', 'fetching', 'backup', 'building', 'pulling', 'restarting', 'health', 'complete']
+  const text = label || t(`update.stage.${stages.includes(stage || '') ? stage : 'installing'}` as Key)
+  return <div className="space-y-1.5" data-testid="update-progress-bar">
+    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+      <span>{text}{service && <span className="ms-1 font-mono" dir="ltr">· {service}</span>}</span>
+      {percent !== undefined && <span className="tabular">{fmtNumber(loc, percent)}%</span>}
+    </div>
+    <div role="progressbar" aria-label={t('update.progress')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={percent === undefined ? text : `${text} · ${fmtNumber(loc, percent)}%`} className="h-2 overflow-hidden rounded-full bg-surface-2">
+      <div className={`h-full rounded-full transition-[width] ${failed ? 'bg-down' : 'bg-accent'} ${percent === undefined ? 'animate-pulse' : ''}`} style={{ width: `${percent ?? 30}%` }} />
+    </div>
+  </div>
+}
+
 /** Confirms an update, hands it to the server's update agent and follows it until the new version answers. */
 export function UpdateDialog({ open, onClose, state, onChanged }: { open: boolean; onClose: () => void; state: UpdateState; onChanged: () => void }) {
   const { t } = usePrefs()
-  const target = (inProgress(state) && state.status?.target) || state.latest?.version || ''
+  const target = (inProgress(state) && (state.pending_version || state.status?.target)) || state.latest?.version || ''
   const [phase, setPhase] = useState<Phase>('confirm')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [progress, setProgress] = useState<'queued' | 'installing' | 'restarting'>('queued')
   const [fail, setFail] = useState<{ message: string; log?: string } | null>(null)
   const [slow, setSlow] = useState(false)
+  const [deployment, setDeployment] = useState<Pick<UpdateRunStatus, 'progress' | 'stage' | 'service'>>({})
   // The status of an earlier attempt must not be mistaken for the outcome of this one.
   const prevStarted = useRef<string | undefined>(undefined)
   const requestedAt = useRef(0)
@@ -33,6 +50,7 @@ export function UpdateDialog({ open, onClose, state, onChanged }: { open: boolea
     setErr(null)
     setFail(null)
     setSlow(false)
+    setDeployment(state.pending ? { progress: 0, stage: 'queued' } : state.status ?? {})
     if (inProgress(state)) {
       prevStarted.current = state.pending ? state.status?.started_at : undefined
       requestedAt.current = Date.now()
@@ -47,26 +65,24 @@ export function UpdateDialog({ open, onClose, state, onChanged }: { open: boolea
     let alive = true
     const tick = async () => {
       try {
-        const h = await get<{ version: string }>('/health')
-        if (!alive) return
-        if (h.version === target) {
-          setPhase('done')
-          onChanged()
-          window.setTimeout(() => window.location.reload(), 3000)
-          return
-        }
-      } catch {
-        if (alive) setProgress('restarting')
-        return
-      }
-      try {
         const s = (await get<{ update: UpdateState }>('/system/update')).update
         if (!alive) return
         const st = s.status
+        const thisAttempt = st && st.target === target && st.started_at !== prevStarted.current
+        if (thisAttempt) setDeployment(st)
         if (!s.pending && st && st.target === target && st.state === 'failed' && st.started_at !== prevStarted.current) {
           setFail({ message: st.message, log: s.log })
           setPhase('failed')
           onChanged()
+          return
+        }
+        // Reaching the new binary is only one milestone; the host agent must finish its
+        // remaining container restarts and health check before the dialog reports success.
+        if (s.current === target && !s.pending && (!st || (thisAttempt && st.state === 'succeeded'))) {
+          setDeployment({ progress: 100, stage: 'complete' })
+          setPhase('done')
+          onChanged()
+          window.setTimeout(() => window.location.reload(), 3000)
           return
         }
         setProgress(s.pending ? 'queued' : 'installing')
@@ -90,6 +106,7 @@ export function UpdateDialog({ open, onClose, state, onChanged }: { open: boolea
       prevStarted.current = state.status?.started_at
       requestedAt.current = Date.now()
       await post('/system/update/apply', { version: target })
+      setDeployment({ progress: 0, stage: 'queued' })
       setProgress('queued')
       setPhase('running')
       onChanged()
@@ -138,15 +155,18 @@ export function UpdateDialog({ open, onClose, state, onChanged }: { open: boolea
             <Loader2 className="size-4 animate-spin text-accent" aria-hidden />
             {progress === 'queued' ? t('update.queued') : progress === 'installing' ? t('update.installing', { version: target }) : t('update.restarting')}
           </div>
+          <UpdateProgressBar value={deployment.progress} stage={deployment.stage} service={deployment.service} />
+          <p className="text-xs text-muted">{t('update.progressHelp')}</p>
           {slow && <p className="rounded-lg border border-warn/40 bg-warn/10 p-3 text-xs">{t('update.slowAgent')} <code className="ltr font-mono">systemctl status intrabin-update.path</code></p>}
           <p className="text-xs text-muted">{t('update.keepOpen')}</p>
         </div>
       )}
       {phase === 'done' && (
-        <div className="flex items-center gap-2 text-sm font-medium text-up" role="status"><CheckCircle2 className="size-4" aria-hidden />{t('update.done', { version: target })}</div>
+        <div className="space-y-3"><UpdateProgressBar value={100} stage="complete" /><div className="flex items-center gap-2 text-sm font-medium text-up" role="status"><CheckCircle2 className="size-4" aria-hidden />{t('update.done', { version: target })}</div></div>
       )}
       {phase === 'failed' && fail && (
         <div className="flex flex-col gap-3 text-sm" role="alert">
+          <UpdateProgressBar value={deployment.progress} stage={deployment.stage} service={deployment.service} failed />
           <ErrorBanner error={`${t('update.failed')}: ${fail.message}`} />
           {fail.log && <pre className="ltr max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-line bg-surface-2 p-3 text-xs">{fail.log}</pre>}
         </div>
@@ -227,6 +247,7 @@ export function UpdatesCard() {
           {st.enabled && !st.check_error && st.latest && !st.available && <p className="text-up">{t('update.upToDate')}</p>}
           {st.dismissed_until && st.available && <p className="text-xs text-muted">{t('update.dismissed', { date: fmtDateTime(loc, st.dismissed_until) })}</p>}
           <p className="text-xs text-muted">{st.agent.available ? t('update.agentReady') : t('update.agentMissing')}</p>
+          {inProgress(st) && <UpdateProgressBar value={st.pending ? 0 : st.status?.progress} stage={st.pending ? 'queued' : st.status?.stage} service={st.status?.service} />}
           {(st.available || inProgress(st)) && st.latest && (
             <Button variant="primary" className="self-start" onClick={() => setOpen(true)} data-testid="update-open-settings">
               {inProgress(st) ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ArrowUpCircle className="size-4" aria-hidden />}
@@ -235,10 +256,13 @@ export function UpdatesCard() {
           )}
           {st.cluster && <section className="rounded-lg border border-line p-3" data-testid="cluster-update-progress">
             <h3 className="mb-2 font-medium">{t('update.cluster')} · <span dir="ltr">{st.cluster.version}</span> · {t(`update.state.${st.cluster.state}` as Key)}</h3>
+            <div className="mb-3"><UpdateProgressBar failed={st.cluster.state === 'failed'} label={t('update.clusterProgress', { done: fmtNumber(loc, st.cluster.nodes.filter((n) => n.state === 'succeeded').length), total: fmtNumber(loc, st.cluster.nodes.length) })}
+              value={st.cluster.nodes.length ? st.cluster.nodes.reduce((sum, n) => sum + (n.state === 'succeeded' ? 100 : Math.max(0, Math.min(100, n.progress ?? 0))), 0) / st.cluster.nodes.length : 0} /></div>
             <ul className="space-y-2">
               {st.cluster.nodes.map((n) => <li key={n.id}>
                 <div className="flex flex-wrap justify-between gap-2"><span>{n.name}</span><span className={n.state === 'failed' ? 'text-down' : n.state === 'succeeded' ? 'text-up' : 'text-muted'}>{n.version} · {t(`update.state.${n.state}` as Key)}</span></div>
                 {n.error && <p className="mt-1 break-words text-xs text-down">{n.error}</p>}
+                {(n.state === 'updating' || n.state === 'failed') && <div className="mt-2"><UpdateProgressBar value={n.progress} stage={n.stage} service={n.service} failed={n.state === 'failed'} /></div>}
               </li>)}
             </ul>
             {st.cluster.state === 'failed' && <Button size="sm" className="mt-3" onClick={retry}>{t('update.retry')}</Button>}

@@ -188,3 +188,17 @@ Choose `vMAJOR.MINOR.PATCH`, update `VERSION` and `CHANGELOG.md`, and add
 push the matching tag. The release workflow checks the version, publishes both architectures
 of the app and runner images, then publishes the GitHub release with those notes. Settings
 shows the current version, latest release and up to 20 recent stable releases with their changes.
+
+### Sequential containers and update progress
+The installer and management update commands prepare each enabled service image in its own
+Compose invocation, then start containers one at a time. Compose engine concurrency is fixed
+at one; a separate build invocation per service also supports older Buildx releases. Source
+installs build each service and fetch image-only dependencies (such as Caddy); release installs
+pull each image. Startup uses `--no-build --pull never` so it cannot trigger hidden builds.
+
+The update dialog and Settings show deployment milestones: fetch, backup, image preparation,
+container startup and health verification. Progress is based on completed stages/services, not
+estimated elapsed time. The percentage stays at the last known milestone during a restart;
+older agents without progress fields show an indeterminate bar. Cluster progress includes
+completed nodes and the active node's progress. A failed update retains its stage and percentage;
+100% is reported only after the host verifies the target version is healthy.

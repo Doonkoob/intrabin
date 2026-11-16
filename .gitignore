@@ -22,3 +22,5 @@ coverage.out
 
 /.playwright-cli/
 /output/playwright/
+
+/tests/installer/__pycache__/

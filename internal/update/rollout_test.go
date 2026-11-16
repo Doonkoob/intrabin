@@ -83,6 +83,12 @@ func TestRollingUpdateSurvivesLeaderChangeAndStopsOnFailure(t *testing.T) {
 	if len(f.calls) != 1 || f.calls[0] != "c" {
 		t.Fatalf("one worker at a time: %v", f.calls)
 	}
+	progress := 57
+	f.states["c"].Status = &Status{State: "running", Target: "v1.3.0", StartedAt: time.Now().UTC().Format(time.RFC3339), Progress: &progress, Stage: "building", Service: "runner"}
+	c.Step(ctx)
+	if p := c.State(ctx); p.Nodes[1].Progress == nil || *p.Nodes[1].Progress != 57 || p.Nodes[1].Service != "runner" {
+		t.Fatalf("worker deployment progress must be replicated: %+v", p)
+	}
 	f.states["c"].Pending = false
 	f.states["c"].Status = &Status{State: "failed", Target: "v1.3.0", StartedAt: time.Now().UTC().Format(time.RFC3339), Message: "build failed"}
 	c.Step(ctx)

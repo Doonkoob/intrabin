@@ -453,17 +453,18 @@ open_firewall() {
 
 start_services() {
   cd "$INSTALL_DIR"
+  source "$INSTALL_DIR/scripts/compose-serial.sh"
   if [[ "$SKIP_BUILD" == "yes" ]]; then
     info "Skipping the image build (--skip-build)"
   elif [[ -n "$RELEASE" ]]; then
     info "Pulling the $RELEASE images…"
-    docker compose pull || die "could not pull the $RELEASE images (does the release exist? Use --docker-mirror behind restricted networks)"
+    compose_serial_images pull || die "could not pull the $RELEASE images (does the release exist? Use --docker-mirror behind restricted networks)"
   else
     info "Building the images (first install takes a few minutes)…"
-    docker compose build || die "image build failed. Behind restricted networks use --docker-mirror, --goproxy and --npm-registry."
+    compose_serial_images build || die "image build failed. Behind restricted networks use --docker-mirror, --goproxy and --npm-registry."
   fi
   info "Starting the containers…"
-  docker compose up -d --remove-orphans
+  compose_serial_up
   info "Waiting for Intrabin to become healthy…"
   local port
   port=$(get_env .env INTRABIN_PORT)

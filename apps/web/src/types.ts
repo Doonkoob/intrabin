@@ -506,6 +506,9 @@ export interface UpdateRelease {
 }
 
 export interface UpdateRunStatus {
+  progress?: number
+  stage?: string
+  service?: string
   state: 'running' | 'succeeded' | 'failed'
   target: string
   from: string
@@ -517,7 +520,7 @@ export interface UpdateRunStatus {
 export interface UpdateRollout {
   version: string
   state: 'running' | 'succeeded' | 'failed'
-  nodes: { id: string; name: string; state: 'queued' | 'updating' | 'succeeded' | 'failed'; version: string; error?: string }[]
+  nodes: { id: string; name: string; state: 'queued' | 'updating' | 'succeeded' | 'failed'; version: string; error?: string; progress?: number; stage?: string; service?: string }[]
 }
 
 export interface UpdateState {
@@ -533,6 +536,7 @@ export interface UpdateState {
   show_banner: boolean
   agent: { available: boolean; mode?: 'release' | 'source' }
   pending: boolean
+  pending_version?: string
   status?: UpdateRunStatus
   log?: string
   repo: string
