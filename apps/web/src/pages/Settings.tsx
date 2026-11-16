@@ -56,7 +56,7 @@ export function SettingsPage() {
   }
   return (
     <>
-      <PageHeader title={t('settings.title')} subtitle={t('settings.subtitle')} />
+      <PageHeader title={t('settings.title')} />
       <div className="grid items-start gap-5 lg:grid-cols-2">
         <Card title={t('settings.appearance')}>
           <div className="flex flex-col gap-4">

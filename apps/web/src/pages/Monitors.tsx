@@ -27,7 +27,7 @@ export function MonitorsPage() {
   }, [data, q, status, group])
   return (
     <>
-      <PageHeader title={t('monitors.title')} subtitle={t('monitors.subtitle')}
+      <PageHeader title={t('monitors.title')}
         actions={can('monitor.manage') && <Link to="/monitors/new"><Button variant="primary"><Plus className="size-4" />{t('monitors.new')}</Button></Link>} />
       <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface p-3">
         <div className="relative min-w-56 flex-1">

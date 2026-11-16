@@ -33,7 +33,7 @@ export function DRPage() {
   const plans = useApi<{ plans: DRPlan[] }>('/dr-plans', 5000)
   return (
     <>
-      <PageHeader title={t('dr.title')} subtitle={t('dr.subtitle')}
+      <PageHeader title={t('dr.title')}
         actions={can('dr.manage') && <Link to="/dr/new"><Button variant="primary"><Plus className="size-4" />{t('dr.new')}</Button></Link>} />
       <Card bodyClass="">
         {plans.loading && !plans.data ? <Spinner /> : plans.error ? <ErrorBanner error={plans.error} onRetry={plans.reload} /> :

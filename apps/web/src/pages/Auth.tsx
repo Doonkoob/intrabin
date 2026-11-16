@@ -1,39 +1,20 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Activity, Boxes, ShieldCheck } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { ApiError, get, post } from '../api'
 import { usePrefs, useSession } from '../app'
 import { Button, ErrorBanner, Field, Input, Select, Textarea } from '../components/ui'
 import { Logo, PrefControls } from '../components/Layout'
 
-function Shell({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
-  const { t } = usePrefs()
+function Shell({ title, brand = 'Intrabin', children }: { title: string; brand?: string; children: React.ReactNode }) {
   return (
-    <div className="auth-shell flex min-h-screen">
-      <aside className="auth-story auth-grid relative hidden w-[44%] flex-col justify-between overflow-hidden p-12 lg:flex xl:p-16">
-        <div className="relative flex items-center gap-3"><Logo /><span className="text-xl font-semibold">Intrabin</span></div>
-        <div className="relative my-16 max-w-md">
-          <p className="mb-6 text-xs font-medium tracking-widest text-[#91d8c8]">{t('auth.eyebrow')}</p>
-          <h2 className="text-4xl font-semibold leading-tight tracking-tight xl:text-5xl">{t('auth.headline')}</h2>
-          <p className="mt-6 text-base leading-8 text-[#aec3d0]">{t('auth.description')}</p>
-          <div className="mt-10 space-y-5">{([
-            { icon: <Activity className="size-4" />, label: 'auth.feature.monitor' },
-            { icon: <ShieldCheck className="size-4" />, label: 'auth.feature.incidents' },
-            { icon: <Boxes className="size-4" />, label: 'auth.feature.control' },
-          ] as const).map((feature) => <div key={feature.label} className="flex items-center gap-3 text-sm"><span aria-hidden className="rounded-lg border border-[#31524f] bg-[#1b3d3b] p-2 text-[#91d8c8]">{feature.icon}</span>{t(feature.label)}</div>)}</div>
-        </div>
-        <div className="text-xs text-[#aec3d0]">{t('nav.tagline')}</div>
-      </aside>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex justify-end p-5"><PrefControls /></div>
-        <div className="flex flex-1 items-center justify-center px-5 pb-16">
-          <div className="w-full max-w-md">
-            <div className="mb-8 flex items-center justify-center gap-3 lg:hidden"><Logo /><span className="text-xl font-semibold">Intrabin</span></div>
-            <div className="ui-card rounded-2xl border border-line bg-surface p-6 sm:p-9">
-              <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-              {subtitle && <p className="mt-2 text-sm leading-relaxed text-muted">{subtitle}</p>}
-              <div className="mt-7">{children}</div>
-            </div>
+    <div className="auth-shell flex min-h-screen flex-col">
+      <div className="flex justify-end p-5"><PrefControls /></div>
+      <div className="flex flex-1 items-center justify-center px-5 pb-16">
+        <div className="w-full max-w-md">
+          <div className="mb-8 flex items-center justify-center gap-3"><Logo /><span className="text-xl font-semibold">{brand}</span></div>
+          <div className="ui-card rounded-2xl border border-line bg-surface p-6 sm:p-9">
+            <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+            <div className="mt-7">{children}</div>
           </div>
         </div>
       </div>
@@ -65,7 +46,7 @@ export function LoginPage({ instanceName }: { instanceName: string }) {
     }
   }
   return (
-    <Shell title={t('login.title')} subtitle={t('login.subtitle', { name: instanceName || 'Intrabin' })}>
+    <Shell title={t('login.title')} brand={instanceName || 'Intrabin'}>
       <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
         {error && <ErrorBanner error={error} />}
         <Field label={t('login.username')} htmlFor="username">
@@ -105,7 +86,7 @@ function JoinSetup({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
     }
   }
   return (
-    <Shell title={t('setup.joinTitle')} subtitle={t('setup.joinSubtitle')}>
+    <Shell title={t('setup.joinTitle')}>
       {done ? <p role="status" className="text-sm text-up">{t('setup.joined')}</p> : (
         <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
           {error && <ErrorBanner error={error} />}
@@ -160,7 +141,7 @@ function CreateSetup({ onDone, onJoin }: { onDone: () => void; onJoin: () => voi
     }
   }
   return (
-    <Shell title={t('setup.title')} subtitle={t('setup.subtitle')}>
+    <Shell title={t('setup.title')}>
       <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
         {error && <ErrorBanner error={error} />}
         <Field label={t('setup.token')} htmlFor="setup_token" help={t('setup.tokenHelp')} error={fields.setup_token}>
@@ -186,7 +167,6 @@ function CreateSetup({ onDone, onJoin }: { onDone: () => void; onJoin: () => voi
             <option value="fa">فارسی</option>
           </Select>
         </Field>
-        <p className="rounded-lg bg-surface-2 p-3 text-xs text-muted">{t('setup.mode')}</p>
         <Button type="submit" variant="primary" loading={busy} className="w-full">{t('setup.submit')}</Button>
         <button type="button" className="text-sm text-accent hover:underline" onClick={onJoin} data-testid="setup-join">{t('setup.joinInstead')}</button>
       </form>

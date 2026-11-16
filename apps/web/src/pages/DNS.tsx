@@ -46,7 +46,7 @@ export function DNSPage() {
   const names = Object.fromEntries((providers.data?.providers ?? []).map((p) => [p.id, p.name]))
   return (
     <>
-      <PageHeader title={t('dns.title')} subtitle={t('dns.subtitle')}
+      <PageHeader title={t('dns.title')}
         actions={<>
           <Segmented label={t('dns.title')} value={tab} onChange={setTab} options={[
             { value: 'integrations', label: t('dns.tab.integrations') },
@@ -115,7 +115,6 @@ function Integrations({ data }: { data: ReturnType<typeof useApi<{ providers: DN
           </Table>
         )}
       </Card>
-      <p className="mt-3 text-xs text-muted">{t('dns.integrationsHelp')}</p>
       {editing && <ProviderDialog provider={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); data.reload() }} />}
       <ConfirmDialog open={!!deleting} onClose={() => setDeleting(null)} onConfirm={remove} title={t('dns.deleteIntegration')}
         message={t('dns.deleteIntegrationMsg', { name: deleting?.name ?? '' })} confirmLabel={t('common.delete')} />

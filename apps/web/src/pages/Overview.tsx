@@ -29,7 +29,7 @@ export function OverviewPage() {
   const down = (s.DOWN ?? 0)
   return (
     <>
-      <PageHeader title={t('overview.title')} subtitle={t('overview.subtitle')} actions={can('monitor.manage') && <Link to="/monitors/new"><Button variant="primary"><Plus className="size-4" />{t('monitors.new')}</Button></Link>} />
+      <PageHeader title={t('overview.title')} actions={can('monitor.manage') && <Link to="/monitors/new"><Button variant="primary"><Plus className="size-4" />{t('monitors.new')}</Button></Link>} />
       {error && <div className="mb-4"><ErrorBanner error={error} onRetry={reload} /></div>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <Stat icon={<Layers />} label={t('overview.totalMonitors')} value={fmtNumber(loc, data.monitors.total)} />

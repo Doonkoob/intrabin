@@ -81,7 +81,7 @@ export function AutomationPage() {
   const runs = useApi<{ runs: WorkflowRun[] }>(tab === 'runs' ? `/workflow-runs?limit=200${runFilter ? '&status=' + runFilter : ''}` : null, 5000)
   return (
     <>
-      <PageHeader title={t('wf.title')} subtitle={t('wf.subtitle')}
+      <PageHeader title={t('wf.title')}
         actions={<>
           <Segmented label={t('wf.title')} value={tab} onChange={setTab} options={[{ value: 'workflows', label: t('wf.tab.workflows') }, { value: 'runs', label: t('wf.tab.runs') }]} />
           {can('automation.manage') && <Link to="/automation/new"><Button variant="primary"><Plus className="size-4" />{t('wf.new')}</Button></Link>}

@@ -90,7 +90,7 @@ export function Layout() {
     <nav aria-label={t('nav.menu')} className="flex h-full flex-col overflow-y-auto p-4">
       <div className="mb-5 flex items-center gap-3 px-2 py-3">
         <Logo />
-        <div><span className="sidebar-brand text-xl font-semibold text-white">{t('app.name')}</span><p className="mt-0.5 text-[11px] text-[#9bb3c2]">{t('nav.tagline')}</p></div>
+        <span className="sidebar-brand text-xl font-semibold text-white">{t('app.name')}</span>
       </div>
       {(['observe', 'operate', 'workspace'] as const).map((group) => {
         const links = items.filter((n) => n.group === group)

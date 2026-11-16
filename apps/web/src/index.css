@@ -122,6 +122,4 @@ button:not(:disabled), summary, select:not(:disabled) { cursor: pointer; }
 html[lang="fa"] .sidebar-group { letter-spacing: 0; font-size: 11px; }
 .sidebar-account { background: #192f3e; border: 1px solid #2a4150; }
 .auth-shell { background: radial-gradient(ellipse at 20% 20%, var(--accent-soft), transparent 60%), var(--bg); }
-.auth-story { background: #112532; color: #e5eff4; }
-.auth-grid { background-image: linear-gradient(#ffffff08 1px, transparent 1px), linear-gradient(90deg, #ffffff08 1px, transparent 1px); background-size: 40px 40px; }
 dialog::backdrop { backdrop-filter: blur(4px); background: rgb(9 22 35 / .55); }

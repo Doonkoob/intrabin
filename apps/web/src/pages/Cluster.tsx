@@ -475,7 +475,7 @@ export function ClusterPage() {
   const admin = can('cluster.manage')
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title={t('cluster.title')} subtitle={c.enabled ? t('cluster.subtitleClustered') : t('cluster.standaloneHelp')} />
+      <PageHeader title={t('cluster.title')} />
       {c.enabled ? <ClusterView c={c} admin={admin} reload={cluster.reload} /> : admin ? <StandaloneActions c={c} reload={cluster.reload} /> : null}
       {c.enabled && admin && <TokensCard />}
       <Card title={<span className="inline-flex items-center gap-2"><Server className="size-4" />{t('overview.node')}</span>}><NodeCard node={node.data!.node} /></Card>

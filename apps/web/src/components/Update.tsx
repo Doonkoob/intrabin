@@ -156,7 +156,6 @@ export function UpdateDialog({ open, onClose, state, onChanged }: { open: boolea
             {progress === 'queued' ? t('update.queued') : progress === 'installing' ? t('update.installing', { version: target }) : t('update.restarting')}
           </div>
           <UpdateProgressBar value={deployment.progress} stage={deployment.stage} service={deployment.service} />
-          <p className="text-xs text-muted">{t('update.progressHelp')}</p>
           {slow && <p className="rounded-lg border border-warn/40 bg-warn/10 p-3 text-xs">{t('update.slowAgent')} <code className="ltr font-mono">systemctl status intrabin-update.path</code></p>}
           <p className="text-xs text-muted">{t('update.keepOpen')}</p>
         </div>
@@ -246,7 +245,7 @@ export function UpdatesCard() {
           {st.check_error && <p className="text-warn">{t('update.checkError', { error: st.check_error })}</p>}
           {st.enabled && !st.check_error && st.checked_at && !st.available && !inProgress(st) && <div role="status" data-testid="no-update-available" className="flex items-center gap-3 rounded-xl border border-line bg-surface-2 p-4"><span className="rounded-full bg-surface p-2 text-accent"><CheckCircle2 className="size-5" aria-hidden /></span><div><p className="font-medium">{t('update.upToDate')}</p><p className="mt-1 text-xs text-muted">{t('update.current')}: <span dir="ltr">{st.current}</span></p></div></div>}
           {st.dismissed_until && st.available && <p className="text-xs text-muted">{t('update.dismissed', { date: fmtDateTime(loc, st.dismissed_until) })}</p>}
-          <p className="text-xs text-muted">{st.agent.available ? t('update.agentReady') : t('update.agentMissing')}</p>
+          {!st.agent.available && <p className="text-xs text-muted">{t('update.agentMissing')}</p>}
           {inProgress(st) && <UpdateProgressBar value={st.pending ? 0 : st.status?.progress} stage={st.pending ? 'queued' : st.status?.stage} service={st.status?.service} />}
           {(st.available || inProgress(st)) && st.latest && (
             <Button variant="primary" className="self-start" onClick={() => setOpen(true)} data-testid="update-open-settings">

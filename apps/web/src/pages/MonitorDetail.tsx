@@ -102,7 +102,6 @@ export function MonitorDetailPage() {
       <div className="mt-4 grid gap-4 xl:grid-cols-3">
         <Card title={t('mdetail.days90')} className="xl:col-span-3">
           {uptime.data ? <UptimeBars days={uptime.data.daily} /> : <Spinner />}
-          <p className="mt-3 text-xs text-muted">{t('mdetail.coverageHelp')}</p>
         </Card>
         <Card title={t('mdetail.responseTime')} className="xl:col-span-2"
           actions={<Segmented label={t('mdetail.responseTime')} value={range} onChange={setRange} options={(['1h', '24h', '7d', '30d'] as Range[]).map((r) => ({ value: r, label: t(`range.${r}` as Key) }))} />}>
