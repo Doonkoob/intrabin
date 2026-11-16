@@ -7,7 +7,7 @@ import type { Key } from '../i18n'
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost'
 
 const variants: Record<Variant, string> = {
-  primary: 'bg-accent text-accent-fg hover:opacity-90 border border-transparent',
+  primary: 'shadow-sm bg-accent text-accent-fg hover:opacity-90 border border-transparent',
   secondary: 'bg-surface text-fg border border-line hover:bg-surface-2',
   danger: 'bg-down text-white hover:opacity-90 border border-transparent dark:text-black',
   ghost: 'bg-transparent text-fg hover:bg-surface-2 border border-transparent',
@@ -15,23 +15,23 @@ const variants: Record<Variant, string> = {
 
 export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; loading?: boolean; size?: 'sm' | 'md' }>(
   function Button({ variant = 'secondary', loading, size = 'md', className = '', children, disabled, ...rest }, ref) {
-    const sz = size === 'sm' ? 'h-8 px-2.5 text-sm' : 'h-9 px-3.5 text-sm'
+    const sz = size === 'sm' ? 'h-8 px-3 text-xs' : 'h-10 px-4 text-sm'
     return (
       <button ref={ref} type="button" {...rest} disabled={disabled || loading}
-        className={`inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${sz} ${variants[variant]} ${className}`}>
+        className={`ui-button inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${sz} ${variants[variant]} ${className}`}>
         {loading && <Loader2 className="size-4 animate-spin" aria-hidden />}
         {children}
       </button>
     )
   })
 
-export function Card({ title, actions, children, className = '', bodyClass = 'p-4' }: { title?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string; bodyClass?: string }) {
+export function Card({ title, actions, children, className = '', bodyClass = 'p-5' }: { title?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string; bodyClass?: string }) {
   return (
-    <section className={`min-w-0 rounded-xl border border-line bg-surface ${className}`}>
+    <section className={`ui-card min-w-0 rounded-2xl border border-line bg-surface ${className}`}>
       {(title || actions) && (
-        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
           {title && <h2 className="text-sm font-semibold">{title}</h2>}
-          {actions && <div className="flex items-center gap-2">{actions}</div>}
+          {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
         </header>
       )}
       <div className={bodyClass}>{children}</div>
@@ -54,7 +54,7 @@ export function Field({ label, help, error, children, htmlFor, optional }: { lab
   )
 }
 
-const inputCls = 'h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm text-fg placeholder:text-muted/70 focus:border-focus aria-[invalid=true]:border-down'
+const inputCls = 'ui-input h-10 w-full rounded-lg border border-line bg-surface px-3 text-sm text-fg placeholder:text-muted/70 focus:border-focus aria-[invalid=true]:border-down'
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }>(function Input({ className = '', invalid, ...rest }, ref) {
   return <input ref={ref} aria-invalid={invalid || undefined} className={`${inputCls} ${className}`} {...rest} />
@@ -101,7 +101,7 @@ export function StatusBadge({ status }: { status: MonitorStatus | undefined }) {
   const t = useT()
   const s = status ?? 'UNKNOWN'
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${statusStyle[s]}`} data-status={s}>
+    <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${statusStyle[s]}`} data-status={s}>
       <StatusDot status={s} />
       {t(`status.${s}` as Key)}
     </span>
@@ -152,8 +152,8 @@ export function ErrorBanner({ error, onRetry }: { error: Error | string; onRetry
 
 export function Empty({ icon, children, action }: { icon?: ReactNode; children: ReactNode; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center text-sm text-muted">
-      {icon && <div className="text-muted/70">{icon}</div>}
+    <div className="flex flex-col items-center justify-center gap-4 px-6 py-16 text-center text-sm text-muted">
+      {icon && <div className="rounded-2xl border border-line bg-surface-2 p-4 text-accent">{icon}</div>}
       <div className="max-w-md">{children}</div>
       {action}
     </div>
@@ -162,10 +162,10 @@ export function Empty({ icon, children, action }: { icon?: ReactNode; children: 
 
 export function PageHeader({ title, subtitle, actions }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+    <div className="page-heading mb-7 flex flex-wrap items-center justify-between gap-4">
       <div className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-        {subtitle && <div className="mt-1 text-sm text-muted">{subtitle}</div>}
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-[28px]">{title}</h1>
+        {subtitle && <div className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{subtitle}</div>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
@@ -183,7 +183,7 @@ export function Dialog({ open, onClose, title, children, footer, wide }: { open:
   }, [open])
   return (
     <dialog ref={ref} onClose={onClose} onCancel={(e) => { e.preventDefault(); onClose() }}
-      className={`m-auto w-[calc(100%-2rem)] ${wide ? 'max-w-2xl' : 'max-w-md'} rounded-xl border border-line bg-surface p-0 text-fg shadow-xl`}>
+      className={`m-auto w-[calc(100%-2rem)] ${wide ? 'max-w-2xl' : 'max-w-md'} rounded-2xl border border-line bg-surface p-0 text-fg shadow-2xl`}>
       {open && (
         <div className="flex max-h-[85vh] flex-col">
           <div className="flex items-center justify-between border-b border-line px-5 py-3">
@@ -211,20 +211,20 @@ export function ConfirmDialog({ open, onClose, onConfirm, title, message, confir
 export function Table({ children }: { children: ReactNode }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">{children}</table>
+      <table className="ui-table w-full text-sm">{children}</table>
     </div>
   )
 }
 
-export const th = 'whitespace-nowrap border-b border-line px-4 py-2.5 text-start text-xs font-medium uppercase tracking-wide text-muted'
-export const td = 'border-b border-line px-4 py-2.5 align-middle'
+export const th = 'whitespace-nowrap border-b border-line bg-surface-2/60 px-5 py-3 text-start text-[11px] font-semibold uppercase tracking-wider text-muted'
+export const td = 'border-b border-line px-5 py-4 align-middle'
 
-export function Stat({ label, value, tone, sub }: { label: ReactNode; value: ReactNode; tone?: 'up' | 'down' | 'warn' | 'muted'; sub?: ReactNode }) {
+export function Stat({ label, value, tone, sub, icon }: { icon?: ReactNode; label: ReactNode; value: ReactNode; tone?: 'up' | 'down' | 'warn' | 'muted'; sub?: ReactNode }) {
   const color = tone === 'up' ? 'text-up' : tone === 'down' ? 'text-down' : tone === 'warn' ? 'text-warn' : 'text-fg'
   return (
-    <div className="rounded-xl border border-line bg-surface p-4">
-      <div className="text-xs font-medium text-muted">{label}</div>
-      <div className={`mt-1 text-2xl font-semibold tabular ${color}`}>{value}</div>
+    <div className="ui-card stat-card min-w-0 rounded-2xl border border-line bg-surface p-4 sm:p-5">
+      <div className="mb-4 flex items-center justify-between gap-2"><div className="text-xs font-medium text-muted">{label}</div>{icon && <span className={`stat-icon ${color}`} aria-hidden>{icon}</span>}</div>
+      <div className={`text-3xl font-semibold tracking-tight tabular ${color}`}>{value}</div>
       {sub && <div className="mt-1 text-xs text-muted">{sub}</div>}
     </div>
   )
@@ -232,10 +232,10 @@ export function Stat({ label, value, tone, sub }: { label: ReactNode; value: Rea
 
 export function Segmented<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: { value: T; label: ReactNode }[]; label: string }) {
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex rounded-lg border border-line bg-surface p-0.5">
+    <div role="radiogroup" aria-label={label} className="inline-flex max-w-full flex-wrap gap-0.5 rounded-lg border border-line bg-surface-2 p-1">
       {options.map((o) => (
         <button key={o.value} type="button" role="radio" aria-checked={value === o.value} onClick={() => onChange(o.value)}
-          className={`rounded-md px-2.5 py-1 text-xs font-medium ${value === o.value ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'}`}>
+          className={`rounded-md px-2.5 py-1 text-xs font-medium ${value === o.value ? 'bg-surface text-accent shadow-sm' : 'text-muted hover:text-fg'}`}>
           {o.label}
         </button>
       ))}

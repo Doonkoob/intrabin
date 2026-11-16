@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { Activity, Boxes, ShieldCheck } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { ApiError, get, post } from '../api'
 import { usePrefs, useSession } from '../app'
@@ -6,16 +7,33 @@ import { Button, ErrorBanner, Field, Input, Select, Textarea } from '../componen
 import { Logo, PrefControls } from '../components/Layout'
 
 function Shell({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+  const { t } = usePrefs()
   return (
-    <div className="flex min-h-screen flex-col">
-      <div className="flex justify-end p-3"><PrefControls /></div>
-      <div className="flex flex-1 items-start justify-center px-4 pb-16 pt-6 sm:items-center">
-        <div className="w-full max-w-md">
-          <div className="mb-6 flex items-center gap-2"><Logo /><span className="font-semibold">Intrabin</span></div>
-          <div className="rounded-2xl border border-line bg-surface p-6 shadow-sm">
-            <h1 className="text-lg font-semibold">{title}</h1>
-            {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
-            <div className="mt-5">{children}</div>
+    <div className="auth-shell flex min-h-screen">
+      <aside className="auth-story auth-grid relative hidden w-[44%] flex-col justify-between overflow-hidden p-12 lg:flex xl:p-16">
+        <div className="relative flex items-center gap-3"><Logo /><span className="text-xl font-semibold">Intrabin</span></div>
+        <div className="relative my-16 max-w-md">
+          <p className="mb-6 text-xs font-medium tracking-widest text-[#91d8c8]">{t('auth.eyebrow')}</p>
+          <h2 className="text-4xl font-semibold leading-tight tracking-tight xl:text-5xl">{t('auth.headline')}</h2>
+          <p className="mt-6 text-base leading-8 text-[#aec3d0]">{t('auth.description')}</p>
+          <div className="mt-10 space-y-5">{([
+            { icon: <Activity className="size-4" />, label: 'auth.feature.monitor' },
+            { icon: <ShieldCheck className="size-4" />, label: 'auth.feature.incidents' },
+            { icon: <Boxes className="size-4" />, label: 'auth.feature.control' },
+          ] as const).map((feature) => <div key={feature.label} className="flex items-center gap-3 text-sm"><span aria-hidden className="rounded-lg border border-[#31524f] bg-[#1b3d3b] p-2 text-[#91d8c8]">{feature.icon}</span>{t(feature.label)}</div>)}</div>
+        </div>
+        <div className="text-xs text-[#aec3d0]">{t('nav.tagline')}</div>
+      </aside>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex justify-end p-5"><PrefControls /></div>
+        <div className="flex flex-1 items-center justify-center px-5 pb-16">
+          <div className="w-full max-w-md">
+            <div className="mb-8 flex items-center justify-center gap-3 lg:hidden"><Logo /><span className="text-xl font-semibold">Intrabin</span></div>
+            <div className="ui-card rounded-2xl border border-line bg-surface p-6 sm:p-9">
+              <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+              {subtitle && <p className="mt-2 text-sm leading-relaxed text-muted">{subtitle}</p>}
+              <div className="mt-7">{children}</div>
+            </div>
           </div>
         </div>
       </div>

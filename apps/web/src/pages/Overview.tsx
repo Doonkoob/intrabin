@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { Activity, Plus } from 'lucide-react'
+import { Activity, Plus, CheckCircle2, AlertTriangle, AlertOctagon, Gauge, Layers } from 'lucide-react'
 import { usePrefs, useSession } from '../app'
 import { useApi } from '../hooks'
 import { fmtDate, fmtMs, fmtNumber, fmtPct, fmtRelative } from '../format'
@@ -29,15 +29,15 @@ export function OverviewPage() {
   const down = (s.DOWN ?? 0)
   return (
     <>
-      <PageHeader title={t('overview.title')} actions={can('monitor.manage') && <Link to="/monitors/new"><Button variant="primary"><Plus className="size-4" />{t('monitors.new')}</Button></Link>} />
+      <PageHeader title={t('overview.title')} subtitle={t('overview.subtitle')} actions={can('monitor.manage') && <Link to="/monitors/new"><Button variant="primary"><Plus className="size-4" />{t('monitors.new')}</Button></Link>} />
       {error && <div className="mb-4"><ErrorBanner error={error} onRetry={reload} /></div>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Stat label={t('overview.totalMonitors')} value={fmtNumber(loc, data.monitors.total)} />
-        <Stat label={t('overview.up')} value={fmtNumber(loc, s.UP ?? 0)} tone="up" />
-        <Stat label={t('overview.down')} value={fmtNumber(loc, down)} tone={down ? 'down' : undefined} sub={s.SUSPECTED_DOWN ? `${t('status.SUSPECTED_DOWN')}: ${fmtNumber(loc, s.SUSPECTED_DOWN)}` : undefined} />
-        <Stat label={t('overview.degraded')} value={fmtNumber(loc, s.DEGRADED ?? 0)} tone={s.DEGRADED ? 'warn' : undefined} />
-        <Stat label={t('overview.activeIncidents')} value={fmtNumber(loc, data.incidents.open)} tone={data.incidents.open ? 'down' : undefined} />
-        <Stat label={t('overview.avgUptime')} value={fmtPct(loc, data.uptime_24h_avg)} />
+        <Stat icon={<Layers />} label={t('overview.totalMonitors')} value={fmtNumber(loc, data.monitors.total)} />
+        <Stat icon={<CheckCircle2 />} label={t('overview.up')} value={fmtNumber(loc, s.UP ?? 0)} tone="up" />
+        <Stat icon={<AlertOctagon />} label={t('overview.down')} value={fmtNumber(loc, down)} tone={down ? 'down' : undefined} sub={s.SUSPECTED_DOWN ? `${t('status.SUSPECTED_DOWN')}: ${fmtNumber(loc, s.SUSPECTED_DOWN)}` : undefined} />
+        <Stat icon={<AlertTriangle />} label={t('overview.degraded')} value={fmtNumber(loc, s.DEGRADED ?? 0)} tone={s.DEGRADED ? 'warn' : undefined} />
+        <Stat icon={<Activity />} label={t('overview.activeIncidents')} value={fmtNumber(loc, data.incidents.open)} tone={data.incidents.open ? 'down' : undefined} />
+        <Stat icon={<Gauge />} label={t('overview.avgUptime')} value={fmtPct(loc, data.uptime_24h_avg)} />
       </div>
       {data.monitors.total === 0 ? (
         <Card className="mt-4">
@@ -46,7 +46,7 @@ export function OverviewPage() {
           </Empty>
         </Card>
       ) : (
-        <div className="mt-4 grid gap-4 xl:grid-cols-3">
+        <div className="mt-6 grid gap-5 xl:grid-cols-3">
           <Card title={t('overview.responseTime')} className="xl:col-span-2"><LatencyChart points={data.latency_24h} /></Card>
           <Card title={t('overview.node')}>
             <dl className="grid grid-cols-2 gap-y-2 text-sm">

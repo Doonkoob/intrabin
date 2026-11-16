@@ -7,13 +7,13 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --bg: #f6f7f9;
+  --bg: #f4f6f9;
   --surface: #ffffff;
   --surface-2: #f1f3f6;
-  --border: #e3e6eb;
-  --text: #111827;
-  --muted: #5b6474;
-  --accent: #0f766e;
+  --border: #e4e9ef;
+  --text: #172b3a;
+  --muted: #627386;
+  --accent: #087f75;
   --accent-fg: #ffffff;
   --accent-soft: #e6f4f2;
   --up: #15803d;
@@ -28,10 +28,10 @@
   --focus: #2563eb;
 }
 .dark {
-  --bg: #0d1117;
-  --surface: #151b23;
-  --surface-2: #1c232d;
-  --border: #2a333f;
+  --bg: #0c141d;
+  --surface: #131f2b;
+  --surface-2: #1b2937;
+  --border: #2a3a4b;
   --text: #e6e9ee;
   --muted: #9aa4b2;
   --accent: #2dd4bf;
@@ -92,3 +92,36 @@ dialog::backdrop { background: rgb(0 0 0 / 0.45); }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* Shared product surfaces keep every screen consistent, including RTL layouts. */
+:root { --card-shadow: 0 2px 3px -2px rgb(25 44 65 / .08), 0 8px 24px -16px rgb(25 44 65 / .12); }
+.dark { --card-shadow: 0 2px 8px rgb(0 0 0 / .12); color-scheme: dark; }
+body { margin: 0; }
+button:not(:disabled), summary, select:not(:disabled) { cursor: pointer; }
+::selection { background: var(--accent-soft); color: var(--accent); }
+.ui-card { box-shadow: var(--card-shadow); }
+.ui-card > header { border-radius: 1rem 1rem 0 0; }
+.ui-input { transition: border-color .15s, box-shadow .15s; }
+.ui-input:hover:not(:disabled) { border-color: color-mix(in srgb, var(--muted) 45%, var(--border)); }
+.ui-input:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
+.ui-input:disabled { background: var(--surface-2); opacity: .7; }
+.ui-button { flex-shrink: 0; }
+.ui-table tbody tr { transition: background .15s; }
+.ui-table tbody tr:hover { background: var(--surface-2); }
+.ui-table tbody tr:last-child > td { border-bottom: 0; }
+.stat-icon { display: inline-flex; align-items: center; justify-content: center; padding: .5rem; border-radius: .7rem; background: var(--surface-2); }
+.stat-icon svg { width: 1rem; height: 1rem; }
+.app-sidebar { background: #112532; color: #dce8ef; border-color: #263c49; }
+.dark .app-sidebar { background: #0d1a25; }
+.sidebar-brand { letter-spacing: -.03em; }
+.sidebar-link { position: relative; color: #a9bdca; transition: background .15s, color .15s; }
+.sidebar-link:hover { color: #fff; background: #1b3443; }
+.sidebar-link.active { background: #214441; color: #a2f0db; box-shadow: inset 0 0 0 1px #315650; }
+.sidebar-link.active::before { content: ''; position: absolute; inset-inline-start: 0; top: 28%; bottom: 28%; width: 3px; border-radius: 3px; background: #6ee7c8; }
+.sidebar-group { color: #819eaf; font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
+html[lang="fa"] .sidebar-group { letter-spacing: 0; font-size: 11px; }
+.sidebar-account { background: #192f3e; border: 1px solid #2a4150; }
+.auth-shell { background: radial-gradient(ellipse at 20% 20%, var(--accent-soft), transparent 60%), var(--bg); }
+.auth-story { background: #112532; color: #e5eff4; }
+.auth-grid { background-image: linear-gradient(#ffffff08 1px, transparent 1px), linear-gradient(90deg, #ffffff08 1px, transparent 1px); background-size: 40px 40px; }
+dialog::backdrop { backdrop-filter: blur(4px); background: rgb(9 22 35 / .55); }

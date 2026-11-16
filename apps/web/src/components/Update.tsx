@@ -244,7 +244,7 @@ export function UpdatesCard() {
           </dl>
           {!st.enabled && <p className="text-muted">{t('update.disabled')}</p>}
           {st.check_error && <p className="text-warn">{t('update.checkError', { error: st.check_error })}</p>}
-          {st.enabled && !st.check_error && st.latest && !st.available && <p className="text-up">{t('update.upToDate')}</p>}
+          {st.enabled && !st.check_error && st.checked_at && !st.available && !inProgress(st) && <div role="status" data-testid="no-update-available" className="flex items-center gap-3 rounded-xl border border-line bg-surface-2 p-4"><span className="rounded-full bg-surface p-2 text-accent"><CheckCircle2 className="size-5" aria-hidden /></span><div><p className="font-medium">{t('update.upToDate')}</p><p className="mt-1 text-xs text-muted">{t('update.current')}: <span dir="ltr">{st.current}</span></p></div></div>}
           {st.dismissed_until && st.available && <p className="text-xs text-muted">{t('update.dismissed', { date: fmtDateTime(loc, st.dismissed_until) })}</p>}
           <p className="text-xs text-muted">{st.agent.available ? t('update.agentReady') : t('update.agentMissing')}</p>
           {inProgress(st) && <UpdateProgressBar value={st.pending ? 0 : st.status?.progress} stage={st.pending ? 'queued' : st.status?.stage} service={st.status?.service} />}

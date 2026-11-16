@@ -27,11 +27,11 @@ export function MonitorsPage() {
   }, [data, q, status, group])
   return (
     <>
-      <PageHeader title={t('monitors.title')} subtitle={data && `${fmtNumber(loc, data.monitors.length)}`}
+      <PageHeader title={t('monitors.title')} subtitle={t('monitors.subtitle')}
         actions={can('monitor.manage') && <Link to="/monitors/new"><Button variant="primary"><Plus className="size-4" />{t('monitors.new')}</Button></Link>} />
-      <div className="mb-3 flex flex-wrap gap-2">
+      <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface p-3">
         <div className="relative min-w-56 flex-1">
-          <Search className="pointer-events-none absolute start-2.5 top-2.5 size-4 text-muted" aria-hidden />
+          <Search className="pointer-events-none absolute start-2.5 top-3 size-4 text-muted" aria-hidden />
           <Input className="ps-8" placeholder={t('common.search')} aria-label={t('common.search')} value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <Select className="w-auto" aria-label={t('monitors.filterStatus')} value={status} onChange={(e) => setStatus(e.target.value)}>

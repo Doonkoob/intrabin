@@ -211,3 +211,39 @@ func TestAvailableClearsAfterUpdate(t *testing.T) {
 		t.Fatalf("no update should be offered for the running version: %+v", st)
 	}
 }
+
+func TestCheckNoStableReleaseIsNotFailure(t *testing.T) {
+	ctx := context.Background()
+	for _, tags := range []string{`[]`, `[{"name":"v2.0.0-rc1"},{"name":"nightly"}]`} {
+		t.Run(tags, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/tags") {
+					_, _ = io.WriteString(w, tags)
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			defer srv.Close()
+			s := newSvc(t, srv.URL, "v1.0.0", "")
+			_ = s.Store.SetSetting(ctx, keyLatest, `{"version":"v1.1.0"}`)
+			_ = s.Store.SetSetting(ctx, keyAvailable, "true")
+			_ = s.Store.SetSetting(ctx, keyError, "old error")
+			if err := s.Check(ctx); err != nil {
+				t.Fatal(err)
+			}
+			st := s.State(ctx)
+			if st.CheckError != "" || st.Available || st.ShowBanner || st.Latest != nil || st.CheckedAt == nil {
+				t.Fatalf("expected a successful empty check, got %+v", st)
+			}
+		})
+	}
+}
+
+func TestCheckMissingRepositoryStillFails(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	s := newSvc(t, srv.URL, "v1.0.0", "")
+	if err := s.Check(context.Background()); err == nil {
+		t.Fatal("an inaccessible repository must not be reported as no update available")
+	}
+}

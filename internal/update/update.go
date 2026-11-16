@@ -193,6 +193,15 @@ func (s *Service) Check(ctx context.Context) error {
 	defer s.mu.Unlock()
 	_ = s.Store.SetSetting(ctx, keyCheckedAt, s.now().Format(time.RFC3339))
 	rel, err := s.latestRelease(ctx)
+	if err == nil && rel == nil {
+		// An accessible repository without a stable release is an empty result,
+		// not a failed check. Clear any cached release that has been removed.
+		_ = s.Store.SetSetting(ctx, keyLatest, "")
+		_ = s.Store.SetSetting(ctx, keyAvailable, "false")
+		_ = s.Store.SetSetting(ctx, keyError, "")
+		_ = s.Store.SetSetting(ctx, keyReleases, "[]")
+		return nil
+	}
 	if err == nil {
 		var newer bool
 		if newer, err = s.isNewer(ctx, rel.Version); err == nil {
@@ -298,7 +307,7 @@ func (s *Service) latestRelease(ctx context.Context) (*Release, error) {
 		}
 	}
 	if best == "" {
-		return nil, errors.New("no release has been published yet")
+		return nil, nil
 	}
 	return &Release{Version: best, Name: best, URL: githubURL + s.Repo + "/releases/tag/" + url.PathEscape(best)}, nil
 }

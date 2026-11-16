@@ -3,6 +3,12 @@
 Intrabin uses semantic release versions (`vMAJOR.MINOR.PATCH`). Each release has a matching
 `VERSION` file, Git tag, container image tag and release note in `docs/releases/`.
 
+## v0.2.1 — 2026-11-17
+
+Refreshed navigation, dashboard, sign-in screens and shared components across the panel, with
+consistent light/dark themes and Persian/RTL layouts. Update checks now show “No update available”
+when no newer stable release exists. See [full release notes](docs/releases/v0.2.1.md).
+
 ## v0.2.0 — 2026-11-16
 
 Per-node check filtering and latency charts, durable sequential cluster updates, release history
