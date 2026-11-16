@@ -32,10 +32,14 @@ COPY --from=web /src/internal/web/dist/ internal/web/dist/
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
     -ldflags "-s -w -X github.com/intrabin/intrabin/internal/node.Version=${VERSION} -X github.com/intrabin/intrabin/internal/node.Commit=${COMMIT} -X github.com/intrabin/intrabin/internal/node.BuildDate=${BUILD_DATE}" \
     -o /out/intrabin ./cmd/intrabin
-RUN mkdir -p /out/data
+RUN mkdir -p /out/data /out/tmp && chmod 1777 /out/tmp
 
 # ---- runtime ----
-FROM gcr.io/distroless/static-debian12:nonroot
+# An empty base: the static binary needs only CA certificates and /tmp. Every base image then comes
+# from Docker Hub, which registry mirrors cover (gcr.io is unreachable in some regions).
+FROM scratch
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /out/tmp /tmp
 LABEL org.opencontainers.image.title="Intrabin" \
       org.opencontainers.image.description="Self-hosted distributed uptime monitoring and recovery automation" \
       org.opencontainers.image.licenses="MIT" \

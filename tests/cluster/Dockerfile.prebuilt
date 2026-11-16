@@ -1,6 +1,9 @@
 # Runtime image from a locally built static binary (same base and hardening as ./Dockerfile).
 # Used by tests/cluster/build_prebuilt.sh when the full multi-stage build is not wanted.
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM golang:1.26-alpine AS certs
+
+FROM scratch
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY intrabin /usr/local/bin/intrabin
 COPY --chown=65532:65532 data /var/lib/intrabin
 ENV INTRABIN_DATA_DIR=/var/lib/intrabin \
