@@ -1,4 +1,4 @@
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION ?= $(shell git describe --exact-match --tags 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || cat VERSION)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X github.com/intrabin/intrabin/internal/node.Version=$(VERSION) -X github.com/intrabin/intrabin/internal/node.Commit=$(COMMIT) -X github.com/intrabin/intrabin/internal/node.BuildDate=$(DATE)

@@ -38,6 +38,8 @@ func (m *Manager) handler() http.Handler {
 	mux.HandleFunc("POST /cluster/v1/apply", m.peerOnly(m.handleForwardApply))
 	mux.HandleFunc("POST /cluster/v1/results", m.peerOnly(m.handleResults))
 	mux.HandleFunc("POST /cluster/v1/demote-self", m.peerOnly(m.handleDemoteSelf))
+	mux.HandleFunc("POST /cluster/v1/update/state", m.peerOnly(m.handlePeerUpdateState))
+	mux.HandleFunc("POST /cluster/v1/update/apply", m.peerOnly(m.handlePeerUpdateApply))
 	return mux
 }
 

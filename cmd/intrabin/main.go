@@ -126,8 +126,10 @@ func serve() error {
 	if advertise == "" {
 		advertise = cfg.PublicURL // peers reach this node through its public web address (tunnel)
 	}
+	updater := &update.Service{Enabled: cfg.UpdateCheck, Repo: cfg.UpdateRepo, Current: node.Version, Dir: cfg.UpdateDir, Store: store, Log: log.With("component", "update")}
 	clusterMgr := cluster.New(cluster.Options{DataDir: cfg.DataDir, Listen: cfg.ClusterListen, Advertise: advertise, APIURL: cfg.PublicURL,
-		Location: cfg.NodeLocation, Store: store, CP: cp, DataBox: box, MasterBox: masterBox, Node: n, Log: log})
+		Location: cfg.NodeLocation, Store: store, CP: cp, DataBox: box, MasterBox: masterBox, Node: n, Log: log, Update: updater})
+	updater.Rollout = &update.Rollout{Service: updater, Cluster: clusterMgr, Store: store, Write: cp.SetSetting}
 	engine := &monitoring.Engine{Store: store, CP: cp, Prober: prober, Incidents: incMgr, Log: log, NodeID: n.Identity.ID, Decrypt: api.DecryptMonitor(box),
 		IsEvaluator: n.CanManage, Workers: cfg.ProbeWorkers, Retention: retention(store), ResultSink: clusterMgr.ResultSink(), Location: clusterMgr.LocationOf}
 	var runnerClient automation.Runner
@@ -170,7 +172,6 @@ func serve() error {
 		}
 		log.Warn("initial setup required: open the web UI and enter this one-time setup token", "setup_token", setupToken)
 	}
-	updater := &update.Service{Enabled: cfg.UpdateCheck, Repo: cfg.UpdateRepo, Current: node.Version, Dir: cfg.UpdateDir, Store: store, Log: log.With("component", "update")}
 	srv := api.New(api.Deps{Config: cfg, Store: store, CP: cp, Cluster: clusterMgr, Node: n, Engine: engine, Prober: prober, Incidents: incMgr, Audit: auditLog,
 		SecretBox: box, Log: log, Web: web.Handler(), SetupToken: setupToken, Automation: auto, DNS: dnsSvc, DR: drMgr, Update: updater})
 
@@ -181,6 +182,7 @@ func serve() error {
 	go dnsReconciler(ctx, dnsSvc, n)
 	go autoCluster(ctx, cfg, clusterMgr, log)
 	go updater.Run(ctx)
+	go updater.Rollout.Run(ctx)
 
 	httpSrv := &http.Server{Addr: cfg.Listen, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10}

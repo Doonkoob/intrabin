@@ -27,9 +27,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
 
 export function Card({ title, actions, children, className = '', bodyClass = 'p-4' }: { title?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string; bodyClass?: string }) {
   return (
-    <section className={`rounded-xl border border-line bg-surface ${className}`}>
+    <section className={`min-w-0 rounded-xl border border-line bg-surface ${className}`}>
       {(title || actions) && (
-        <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
+        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
           {title && <h2 className="text-sm font-semibold">{title}</h2>}
           {actions && <div className="flex items-center gap-2">{actions}</div>}
         </header>

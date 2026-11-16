@@ -117,6 +117,7 @@ func (m *Manager) Status(ctx context.Context) *Status {
 			ms.Suffrage = "voter"
 		}
 		if ms.Self {
+			ms.Version = versionString()
 			ms.Reachable = true
 			ms.AppliedIndex = r.AppliedIndex()
 			ms.RaftState = r.State().String()
@@ -133,9 +134,7 @@ func (m *Manager) Status(ctx context.Context) *Status {
 				ago := time.Since(v.At).Milliseconds()
 				ms.LastSeenMs = &ago
 				ms.AppliedIndex, ms.RaftState, ms.Outbox = v.Applied, v.State, v.Outbox
-				if ms.Version == "" {
-					ms.Version = v.Version
-				}
+				ms.Version = v.Version
 				if time.Since(v.At) <= 3*m.opt.MeshFreshness {
 					st.Mesh[id] = map[string]bool{}
 					for p := range v.Heard {

@@ -514,7 +514,15 @@ export interface UpdateRunStatus {
   message: string
 }
 
+export interface UpdateRollout {
+  version: string
+  state: 'running' | 'succeeded' | 'failed'
+  nodes: { id: string; name: string; state: 'queued' | 'updating' | 'succeeded' | 'failed'; version: string; error?: string }[]
+}
+
 export interface UpdateState {
+  releases: UpdateRelease[]
+  cluster?: UpdateRollout
   enabled: boolean
   current: string
   latest?: UpdateRelease

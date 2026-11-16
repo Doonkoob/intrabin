@@ -19,3 +19,6 @@ coverage.out
 /compose.override.yaml
 /intrabin
 /run/
+
+/.playwright-cli/
+/output/playwright/

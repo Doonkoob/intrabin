@@ -26,6 +26,7 @@ import (
 	"github.com/intrabin/intrabin/internal/node"
 	"github.com/intrabin/intrabin/internal/security"
 	"github.com/intrabin/intrabin/internal/storage"
+	"github.com/intrabin/intrabin/internal/update"
 )
 
 // Local (non-replicated) settings.
@@ -56,6 +57,7 @@ type Options struct {
 	MasterBox *security.SecretBox // node master key; wraps the cluster data key at rest
 	Node      *node.Node
 	Log       *slog.Logger
+	Update    *update.Service
 
 	// MeshFreshness is how recent a bidirectional reachability proof must be (default 5s).
 	MeshFreshness time.Duration

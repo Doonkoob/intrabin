@@ -7,7 +7,7 @@ import (
 	"github.com/intrabin/intrabin/internal/update"
 )
 
-// Updates are node-local: every node checks GitHub and is updated on its own server.
+// Release checks are node-local; a leader's confirmed update also starts a durable cluster plan.
 
 func (s *Server) updateOrErr(w http.ResponseWriter, r *http.Request) bool {
 	if s.update == nil {
@@ -61,12 +61,19 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
-	err := s.update.Request(r.Context(), req.Version, p.User.Username)
+	var err error
+	if s.cluster != nil && s.cluster.Enabled() && s.update.Rollout != nil {
+		err = s.update.Rollout.Start(r.Context(), req.Version, p.User.Username)
+	} else {
+		err = s.update.Request(r.Context(), req.Version, p.User.Username)
+	}
 	details := map[string]any{"version": req.Version, "from": s.update.Current}
 	if err != nil {
 		details["error"] = err.Error()
 		s.audit.Record(r.Context(), p.actor(), "system.update_requested", "system", "", "failure", details)
 		switch {
+		case errors.Is(err, update.ErrClusterInactive):
+			s.writeErr(w, r, &APIError{Status: http.StatusConflict, Code: "cluster_update_requires_leader", Message: err.Error()})
 		case errors.Is(err, update.ErrNoAgent):
 			s.writeErr(w, r, &APIError{Status: http.StatusConflict, Code: "update_agent_missing", Message: err.Error()})
 		case errors.Is(err, update.ErrNotAvailable):
@@ -79,5 +86,22 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit.Record(r.Context(), p.actor(), "system.update_requested", "system", "", "", details)
+	writeJSON(w, 202, map[string]any{"update": s.update.State(r.Context())})
+}
+
+func (s *Server) handleUpdateRetry(w http.ResponseWriter, r *http.Request) {
+	if !s.updateOrErr(w, r) {
+		return
+	}
+	if s.update.Rollout == nil {
+		s.writeErr(w, r, &APIError{Status: 409, Code: "update_unavailable", Message: "Cluster updates are not available."})
+		return
+	}
+	err := s.update.Rollout.Retry(r.Context())
+	if err != nil {
+		s.writeErr(w, r, &APIError{Status: 409, Code: "update_retry_failed", Message: err.Error()})
+		return
+	}
+	s.audit.Record(r.Context(), principal(r).actor(), "system.update_retried", "system", "", "", nil)
 	writeJSON(w, 202, map[string]any{"update": s.update.State(r.Context())})
 }

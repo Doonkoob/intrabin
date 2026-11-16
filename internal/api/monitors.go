@@ -706,6 +706,11 @@ func (s *Server) handleMonitorStats(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, r, err)
 		return
 	}
+	nodeSeries, err := s.store.NodeLatencySeries(r.Context(), id, since, bucket)
+	if err != nil {
+		s.writeErr(w, r, err)
+		return
+	}
 	br, err := s.store.Breakdown(r.Context(), id, since)
 	if err != nil {
 		s.writeErr(w, r, err)
@@ -729,7 +734,7 @@ func (s *Server) handleMonitorStats(w http.ResponseWriter, r *http.Request) {
 	if rounds == nil {
 		rounds = []*model.RoundResult{}
 	}
-	writeJSON(w, 200, map[string]any{"latency": series, "bucket_seconds": int(bucket.Seconds()), "breakdown": br, "rounds": rounds,
+	writeJSON(w, 200, map[string]any{"latency": series, "node_latency": nodeSeries, "bucket_seconds": int(bucket.Seconds()), "breakdown": br, "rounds": rounds,
 		"cert_expires_at": cert, "incidents": incs, "node_names": s.nodeNames()})
 }
 

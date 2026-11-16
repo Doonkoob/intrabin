@@ -30,7 +30,8 @@ multi-location monitoring with automatic leader failover.
   so no extra port is needed; leadership can be handed over and a leader turned into a worker from the UI.
   See [docs/operations/cluster.md](docs/operations/cluster.md).
 * **Updates from the UI**: a daily check for new GitHub releases; owners and admins can install an update
-  with one confirmation (backup first, data kept). See [docs/operations/installation.md](docs/operations/installation.md#upgrade).
+  with one confirmation (backup first, data kept). Starting on the leader also updates the other
+  cluster members sequentially; existing nodes need a one-time upgrade to v0.2.0 first. See [docs/operations/installation.md](docs/operations/installation.md#upgrade).
 * **Automation**: workflows triggered by incident status changes, conditions (latency, status code,
   24 h uptime, days to certificate expiry, status), schedules or by hand, with Bash/Python
   script steps in an isolated Action Runner container, HTTP/webhook steps with SSRF protection, durable
@@ -98,6 +99,8 @@ docker compose logs intrabin | grep setup_token     # one-time setup token
 Open <http://127.0.0.1:8080>, enter the setup token and create the owner account. The UI is bound
 to localhost by default; see [docs/operations/installation.md](docs/operations/installation.md) for
 TLS/reverse-proxy setup, backup/restore, upgrades and credential recovery.
+
+Release versions and changes: [CHANGELOG.md](CHANGELOG.md).
 
 ## Development
 ```bash

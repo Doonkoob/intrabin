@@ -433,6 +433,47 @@ func (s *Store) LatencySeries(ctx context.Context, monitorID string, since time.
 	return out, rows.Err()
 }
 
+// NodeSeries is one monitoring node's latency series for a monitor.
+type NodeSeries struct {
+	NodeID string         `json:"node_id"`
+	Points []LatencyPoint `json:"points"`
+}
+
+// NodeLatencySeries returns time-bucketed latency per monitoring node. Buckets of an hour or more
+// come from the hourly per-node aggregates (kept longer than raw results and identical on every
+// node); shorter buckets from raw results. MaxMs is not available from the aggregates.
+func (s *Store) NodeLatencySeries(ctx context.Context, monitorID string, since time.Time, bucket time.Duration) ([]NodeSeries, error) {
+	bms := max(bucket.Milliseconds(), 1)
+	q := `SELECT node_id, (probe_at / ?) * ? AS b, COALESCE(AVG(CASE WHEN success=1 THEN latency_ms END),0), COALESCE(MAX(CASE WHEN success=1 THEN latency_ms END),0),
+		SUM(CASE WHEN success=0 THEN 1 ELSE 0 END), COUNT(*) FROM check_results WHERE monitor_id=? AND probe_at>=? GROUP BY node_id, b ORDER BY node_id, b`
+	args := []any{bms, bms, monitorID, ms(since)}
+	if bucket >= time.Hour {
+		q = `SELECT node_id, (hour / ?) * ? AS b, CASE WHEN SUM(latency_count)>0 THEN SUM(latency_sum)/SUM(latency_count) ELSE 0 END, 0,
+			SUM(failures), SUM(probes) FROM monitor_node_hourly WHERE monitor_id=? AND hour>=? GROUP BY node_id, b ORDER BY node_id, b`
+		args = []any{bms, bms, monitorID, ms(since.UTC().Truncate(time.Hour))}
+	}
+	rows, err := s.DB.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []NodeSeries{}
+	for rows.Next() {
+		var node string
+		var b int64
+		var p LatencyPoint
+		if err := rows.Scan(&node, &b, &p.AvgMs, &p.MaxMs, &p.Failures, &p.Total); err != nil {
+			return nil, err
+		}
+		p.At = fromMs(b)
+		if len(out) == 0 || out[len(out)-1].NodeID != node {
+			out = append(out, NodeSeries{NodeID: node, Points: []LatencyPoint{}})
+		}
+		out[len(out)-1].Points = append(out[len(out)-1].Points, p)
+	}
+	return out, rows.Err()
+}
+
 // Prune deletes data older than the retention thresholds.
 func (s *Store) Prune(ctx context.Context, rawBefore, roundsBefore, hourlyBefore time.Time) (int64, error) {
 	var total int64

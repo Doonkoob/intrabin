@@ -189,7 +189,7 @@ export function UpdateBanner() {
 /** Settings card: installed and latest version, manual check, update. */
 export function UpdatesCard() {
   const { t, loc } = usePrefs()
-  const u = useApi<{ update: UpdateState }>('/system/update', 60000)
+  const u = useApi<{ update: UpdateState }>('/system/update', 5000)
   const [checking, setChecking] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
@@ -198,6 +198,10 @@ export function UpdatesCard() {
     setChecking(true)
     setErr(null)
     try { await post('/system/update/check'); await u.reload() } catch (e) { setErr((e as ApiError).message) } finally { setChecking(false) }
+  }
+  const retry = async () => {
+    setErr(null)
+    try { await post('/system/update/cluster/retry'); await u.reload() } catch (e) { setErr((e as ApiError).message) }
   }
   return (
     <Card title={t('update.card')} actions={st?.enabled && <Button size="sm" loading={checking} onClick={check} data-testid="update-check"><RefreshCw className="size-3.5" />{t('update.checkNow')}</Button>}>
@@ -229,6 +233,26 @@ export function UpdatesCard() {
               {t('update.updateTo', { version: (inProgress(st) && st.status?.target) || st.latest.version })}
             </Button>
           )}
+          {st.cluster && <section className="rounded-lg border border-line p-3" data-testid="cluster-update-progress">
+            <h3 className="mb-2 font-medium">{t('update.cluster')} · <span dir="ltr">{st.cluster.version}</span> · {t(`update.state.${st.cluster.state}` as Key)}</h3>
+            <ul className="space-y-2">
+              {st.cluster.nodes.map((n) => <li key={n.id}>
+                <div className="flex flex-wrap justify-between gap-2"><span>{n.name}</span><span className={n.state === 'failed' ? 'text-down' : n.state === 'succeeded' ? 'text-up' : 'text-muted'}>{n.version} · {t(`update.state.${n.state}` as Key)}</span></div>
+                {n.error && <p className="mt-1 break-words text-xs text-down">{n.error}</p>}
+              </li>)}
+            </ul>
+            {st.cluster.state === 'failed' && <Button size="sm" className="mt-3" onClick={retry}>{t('update.retry')}</Button>}
+          </section>}
+          {(st.releases?.length ?? 0) > 0 && <section data-testid="release-history">
+            <h3 className="mb-2 font-medium">{t('update.history')}</h3>
+            <div className="max-h-96 overflow-auto rounded-lg border border-line">
+              {st.releases.map((r) => <details key={r.version} className="border-b border-line p-3 last:border-0">
+                <summary className="cursor-pointer"><span dir="ltr" className="font-mono">{r.version}</span>{r.published_at && <span className="ms-3 text-xs text-muted">{fmtDateTime(loc,r.published_at)}</span>}</summary>
+                <pre className="mt-2 whitespace-pre-wrap break-words text-xs" dir="auto">{r.notes || r.name}</pre>
+                <a href={r.url} className="mt-2 inline-flex items-center gap-1 text-xs text-accent" target="_blank" rel="noreferrer">GitHub<ExternalLink className="size-3" /></a>
+              </details>)}
+            </div>
+          </section>}
           <UpdateDialog open={open} onClose={() => setOpen(false)} state={st} onChanged={u.reload} />
         </div>
       )}

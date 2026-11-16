@@ -34,6 +34,7 @@ const (
 	keyCheckedAt = "local.update.checked_at"
 	keyError     = "local.update.error"
 	keyDismissed = "local.update.dismissed_until"
+	keyReleases  = "local.update.releases"
 )
 
 const (
@@ -93,19 +94,22 @@ type Status struct {
 
 // State is what the UI shows.
 type State struct {
-	Enabled        bool       `json:"enabled"`
-	Current        string     `json:"current"`
-	Latest         *Release   `json:"latest,omitempty"`
-	Available      bool       `json:"available"`
-	CheckedAt      *time.Time `json:"checked_at,omitempty"`
-	CheckError     string     `json:"check_error,omitempty"`
-	DismissedUntil *time.Time `json:"dismissed_until,omitempty"`
-	ShowBanner     bool       `json:"show_banner"`
-	Agent          Agent      `json:"agent"`
-	Pending        bool       `json:"pending"` // requested, not yet picked up by the agent
-	Status         *Status    `json:"status,omitempty"`
-	Log            string     `json:"log,omitempty"`
-	Repo           string     `json:"repo"`
+	Enabled        bool         `json:"enabled"`
+	Current        string       `json:"current"`
+	Latest         *Release     `json:"latest,omitempty"`
+	Available      bool         `json:"available"`
+	CheckedAt      *time.Time   `json:"checked_at,omitempty"`
+	CheckError     string       `json:"check_error,omitempty"`
+	DismissedUntil *time.Time   `json:"dismissed_until,omitempty"`
+	ShowBanner     bool         `json:"show_banner"`
+	Agent          Agent        `json:"agent"`
+	Pending        bool         `json:"pending"` // requested, not yet picked up by the agent
+	PendingVersion string       `json:"pending_version,omitempty"`
+	Status         *Status      `json:"status,omitempty"`
+	Log            string       `json:"log,omitempty"`
+	Repo           string       `json:"repo"`
+	Releases       []Release    `json:"releases"`
+	Cluster        *RolloutPlan `json:"cluster,omitempty"`
 }
 
 // Service implements the check and the hand-over to the agent.
@@ -119,6 +123,7 @@ type Service struct {
 	APIBase string       // default https://api.github.com (tests override)
 	Client  *http.Client // default: 20 s timeout
 	Now     func() time.Time
+	Rollout *Rollout
 
 	mu sync.Mutex // serialises checks and requests
 }
@@ -192,6 +197,11 @@ func (s *Service) Check(ctx context.Context) error {
 			_ = s.Store.SetSetting(ctx, keyLatest, string(b))
 			_ = s.Store.SetSetting(ctx, keyAvailable, strconv.FormatBool(newer))
 			_ = s.Store.SetSetting(ctx, keyError, "")
+			// History failure must not hide an otherwise valid update.
+			if releases, e := s.releases(ctx); e == nil {
+				b, _ := json.Marshal(releases)
+				_ = s.Store.SetSetting(ctx, keyReleases, string(b))
+			}
 			if newer {
 				s.Log.Info("a new Intrabin release is available", "current", s.Current, "latest", rel.Version)
 			}
@@ -210,6 +220,26 @@ type ghRelease struct {
 	Draft       bool      `json:"draft"`
 	Prerelease  bool      `json:"prerelease"`
 	PublishedAt time.Time `json:"published_at"`
+}
+
+func (s *Service) releases(ctx context.Context) ([]Release, error) {
+	var rows []ghRelease
+	if _, err := s.get(ctx, "/repos/"+s.Repo+"/releases?per_page=20", &rows); err != nil {
+		return nil, err
+	}
+	out := []Release{}
+	for _, r := range rows {
+		v, ok := parseSemver(r.TagName)
+		if !ok || v.pre != "" || r.Draft || r.Prerelease {
+			continue
+		}
+		notes := r.Body
+		if len(notes) > maxNotes {
+			notes = notes[:maxNotes] + "…"
+		}
+		out = append(out, Release{Version: r.TagName, Name: r.Name, Notes: notes, PublishedAt: r.PublishedAt, URL: githubURL + s.Repo + "/releases/tag/" + url.PathEscape(r.TagName)})
+	}
+	return out, nil
 }
 
 func (s *Service) get(ctx context.Context, path string, out any) (int, error) {
@@ -339,7 +369,13 @@ func (s *Service) Dismiss(ctx context.Context) (time.Time, error) {
 
 // State returns the update state shown in the UI.
 func (s *Service) State(ctx context.Context) *State {
-	st := &State{Enabled: s.Enabled, Current: s.Current, Repo: s.Repo}
+	st := &State{Enabled: s.Enabled, Current: s.Current, Repo: s.Repo, Releases: []Release{}}
+	if b, _ := s.Store.GetSetting(ctx, keyReleases); b != "" {
+		_ = json.Unmarshal([]byte(b), &st.Releases)
+	}
+	if s.Rollout != nil {
+		st.Cluster = s.Rollout.State(ctx)
+	}
 	if v, _ := s.Store.GetSetting(ctx, keyLatest); v != "" {
 		var r Release
 		if json.Unmarshal([]byte(v), &r) == nil && r.Version != "" {
@@ -367,12 +403,25 @@ func (s *Service) State(ctx context.Context) *State {
 	if s.Dir != "" {
 		_, err := os.Lstat(filepath.Join(s.Dir, "request"))
 		st.Pending = err == nil
+		if st.Pending {
+			if b, err := s.readSmall("request", 4096); err == nil {
+				for _, line := range strings.Split(string(b), "\n") {
+					if strings.HasPrefix(line, "version=") {
+						st.PendingVersion = strings.TrimPrefix(line, "version=")
+						break
+					}
+				}
+			}
+		}
 		st.Status = s.status()
 		if st.Status != nil {
 			st.Log = s.logTail()
 		}
 	}
 	st.ShowBanner = st.Available && st.DismissedUntil == nil && !st.Pending && (st.Status == nil || st.Status.State != "running")
+	if len(st.Releases) == 0 && st.Latest != nil {
+		st.Releases = []Release{*st.Latest}
+	}
 	return st
 }
 
@@ -432,13 +481,48 @@ func (s *Service) logTail() string {
 // Request asks the host agent to install version, which must be the latest release and newer
 // than the running version.
 func (s *Service) Request(ctx context.Context, version, actor string) error {
+	return s.request(ctx, version, actor, false)
+}
+
+// RequestVersion pins a rolling update to its confirmed release, even if GitHub has since
+// published another one. Every node verifies the release itself; peers cannot supply artifacts.
+func (s *Service) RequestVersion(ctx context.Context, version, actor string) error {
+	v, ok := parseSemver(version)
+	if !ok || v.pre != "" {
+		return ErrNotAvailable
+	}
+	if s.Current == version {
+		return nil
+	}
+	st := s.State(ctx)
+	if st.Pending || (st.Status != nil && st.Status.Target == version && st.Status.State == "running") {
+		return ErrBusy
+	}
+	newer, err := s.isNewer(ctx, version)
+	if err != nil {
+		return err
+	}
+	if !newer {
+		return ErrNotAvailable
+	}
+	var rel ghRelease
+	if _, err := s.get(ctx, "/repos/"+s.Repo+"/releases/tags/"+url.PathEscape(version), &rel); err != nil {
+		return err
+	}
+	if rel.TagName != version || rel.Draft || rel.Prerelease {
+		return ErrNotAvailable
+	}
+	return s.request(ctx, version, actor, true)
+}
+
+func (s *Service) request(ctx context.Context, version, actor string, pinned bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.State(ctx)
 	if !st.Agent.Available {
 		return ErrNoAgent
 	}
-	if !semverRe.MatchString(version) || st.Latest == nil || st.Latest.Version != version || !st.Available {
+	if !semverRe.MatchString(version) || (!pinned && (st.Latest == nil || st.Latest.Version != version || !st.Available)) {
 		return ErrNotAvailable
 	}
 	if st.Pending {

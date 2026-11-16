@@ -62,6 +62,7 @@ services:
       context: .
       dockerfile: Dockerfile.runner
       args:
+        VERSION: ${INTRABIN_VERSION:-dev}
         GOPROXY_URL: ${GOPROXY_URL:-}
     restart: unless-stopped
     environment:

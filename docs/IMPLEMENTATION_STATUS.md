@@ -1,6 +1,6 @@
 # Implementation status
 
-_Last updated: 2026-11-02. Keep this file accurate: a feature is "done" only when its backend works and it is tested._
+_Last updated: 2026-11-16. Keep this file accurate: a feature is "done" only when its backend works and it is tested._
 
 ## Summary
 | Phase | State |
@@ -12,6 +12,11 @@ _Last updated: 2026-11-02. Keep this file accurate: a feature is "done" only whe
 | 4 — Cloudflare / ArvanCloud DNS | **Done** (see below; verified by Go tests against a fake of both provider APIs with fault injection, and Playwright. Not run against real provider accounts, by design) |
 | 5 — Disaster-recovery workflows | **Done** (see below; verified by Go tests with a fake DNS provider, including automatic gating and failed switches, and Playwright. No approval step type or drill mode yet) |
 | 6 — Hardening & release | Partial (CI workflow, docs, MIT license, one-command Ubuntu installer + management CLI, backup/restore commands, release images; plus per-node latency, SSL overview, retention presets and condition triggers) |
+
+## v0.2.0 additions
+* Monitor details: node column and node filter for recent checks; multi-line per-node latency chart, failure/missing-data gaps, raw short-range results and replicated hourly long-range history.
+* Cluster updates: durable Raft rollout plan, leader first then one member at a time, current-leader mTLS dispatch tied to the active plan, pinned stable release verification on each node, progress and retry in Settings. All members must first be upgraded once to v0.2.0 and have the installer host agent. Failed installations stop the rollout.
+* Release history in Settings; VERSION, CHANGELOG and per-version release notes; release workflow validates the version and publishes notes after images. App and runner get the release version.
 
 ## Completed components (cluster over the web port, leadership handover, updates from the UI)
 * **Cluster traffic through the public URL** — a cluster address may be the node's `http(s)://` URL; peers then reach it through a WebSocket tunnel on `/api/v1/cluster/tunnel` of the normal web port (works behind Caddy/Nginx/CDNs, no port 7443 needed). The unchanged cluster mTLS session runs inside the tunnel end to end; the tunnel route bypasses the Host allow-list and session middleware only. `INTRABIN_CLUSTER_ADVERTISE` defaults to `INTRABIN_PUBLIC_URL` (set by the installer). Join tokens carry URLs; `host:port` addresses keep working and can be mixed.
@@ -116,7 +121,7 @@ _Last updated: 2026-11-02. Keep this file accurate: a feature is "done" only whe
 * `/monitors/test` uses only credentials typed into the form, not stored secrets of an existing monitor.
 * Uptime 24 h per monitor in list/overview is computed with one query per monitor (fine for hundreds, should be batched for thousands).
 * Charts keep a left-to-right time axis in RTL by design.
-* Per-node latency and condition triggers use the round's average latency; the dashboard has no per-node latency chart over time yet (table of averages only). SQLite does not shrink the file after pruning without `VACUUM`.
+* Per-node latency and condition triggers use the round's average latency; monitor details now include per-node latency charts over time. SQLite does not shrink the file after pruning without `VACUUM`.
 * No master-key rotation command yet.
 * DNS: not exercised against real Cloudflare or ArvanCloud accounts (mocks only, as required); no compare-and-set at the providers, so the conflict check narrows but does not close the race with other editors; only A/AAAA/CNAME/TXT are editable; snapshot reasons and provider error texts are English only; zone selection in the workflow editor is a text field.
 * Automation: an incident-triggered run is created right after the incident transition commits; a crash between the two commits loses that trigger. No approval step type yet. Script output and server-side error texts are English only. Scripts have the runner container's network access (restrict egress at the network level). The runner's HTTP API is plain HTTP unless TLS is configured on it.

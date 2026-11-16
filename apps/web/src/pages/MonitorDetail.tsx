@@ -6,12 +6,14 @@ import { usePrefs, useSession } from '../app'
 import { useApi } from '../hooks'
 import { fmtDate, fmtDateTime, fmtDuration, fmtMs, fmtNumber, fmtPct, fmtRelative } from '../format'
 import { Button, Card, ConfirmDialog, Empty, ErrorBanner, IncidentBadge, PageHeader, Segmented, Spinner, StatusBadge, Table, td, th } from '../components/ui'
-import { LatencyChart, Legend, RoundStrip, UptimeBars } from '../components/charts'
+import { LatencyChart, NodeLatencyChart, Legend, RoundStrip, UptimeBars } from '../components/charts'
 import type { CheckResult, DailyBucket, Incident, LatencyPoint, Monitor, RoundResult, UptimeStats } from '../types'
 import type { Key } from '../i18n'
 
 interface Stats {
   latency: LatencyPoint[]
+  node_latency: { node_id: string; points: LatencyPoint[] }[]
+  bucket_seconds: number
   breakdown: { status_codes: Record<string, number>; error_categories: Record<string, number>; nodes: { node_id: string; total: number; failures: number; avg_latency_ms?: number; last_probe_at: string; last_success: boolean }[] }
   rounds: RoundResult[]
   cert_expires_at: string | null
@@ -44,13 +46,14 @@ export function MonitorDetailPage() {
   const { can } = useSession()
   const navigate = useNavigate()
   const [range, setRange] = useState<Range>('24h')
+  const [resultNode, setResultNode] = useState('')
   const [confirmDel, setConfirmDel] = useState(false)
   const [busy, setBusy] = useState(false)
   const [actionErr, setActionErr] = useState<Error | null>(null)
   const mon = useApi<{ monitor: Monitor }>(`/monitors/${id}`, 15000)
   const uptime = useApi<{ periods: Record<string, UptimeStats>; daily: DailyBucket[] }>(`/monitors/${id}/uptime`, 60000)
   const stats = useApi<Stats>(`/monitors/${id}/stats?range=${range}`, 15000)
-  const results = useApi<{ results: CheckResult[] }>(`/monitors/${id}/results?limit=25`, 15000)
+  const results = useApi<{ results: CheckResult[] }>(`/monitors/${id}/results?limit=25${resultNode ? `&node_id=${encodeURIComponent(resultNode)}` : ''}`, 15000)
 
   if (mon.loading && !mon.data) return <Spinner />
   if (mon.error && !mon.data) return <ErrorBanner error={mon.error} onRetry={mon.reload} />
@@ -142,14 +145,24 @@ export function MonitorDetailPage() {
             </Table>
           ) : <Empty>{t('common.noData')}</Empty>}
         </Card>
-        <Card title={t('mdetail.recentChecks')} className="xl:col-span-2" bodyClass="p-0">
-          {results.data && results.data.results.length > 0 ? (
+        <Card title={t('mdetail.nodeChart')} className="xl:col-span-3">
+          {stats.error ? <ErrorBanner error={stats.error} onRetry={stats.reload} /> : stats.data
+            ? <NodeLatencyChart series={stats.data.node_latency ?? []} names={stats.data.node_names} bucketSeconds={stats.data.bucket_seconds} /> : <Spinner />}
+        </Card>
+        <Card title={t('mdetail.recentChecks')} className="xl:col-span-2" bodyClass="p-0" actions={
+          <select aria-label={t('mdetail.filterNode')} data-testid="checks-node-filter" value={resultNode} onChange={(e) => setResultNode(e.target.value)} className="max-w-48 rounded-lg border border-line bg-surface px-2 py-1 text-sm">
+            <option value="">{t('mdetail.allNodes')}</option>
+            {Array.from(new Set([...Object.keys(stats.data?.node_names ?? {}), ...(stats.data?.breakdown.nodes.map((n) => n.node_id) ?? []), ...(resultNode ? [resultNode] : [])])).map((nid) => <option key={nid} value={nid}>{nodeName(nid)}</option>)}
+          </select>
+        }>
+          {results.error ? <div className="p-4"><ErrorBanner error={results.error} onRetry={results.reload} /></div> : results.loading ? <Spinner /> : results.data && results.data.results.length > 0 ? (
             <Table>
-              <thead><tr><th className={th}>{t('common.time')}</th><th className={th}>{t('mdetail.result')}</th><th className={th}>{t('mdetail.code')}</th><th className={th}>{t('mdetail.latency')}</th><th className={`${th} hidden md:table-cell`}>{t('mdetail.message')}</th></tr></thead>
+              <thead><tr><th className={th}>{t('common.time')}</th><th className={th}>{t('common.node')}</th><th className={th}>{t('mdetail.result')}</th><th className={th}>{t('mdetail.code')}</th><th className={th}>{t('mdetail.latency')}</th><th className={`${th} hidden md:table-cell`}>{t('mdetail.message')}</th></tr></thead>
               <tbody data-testid="recent-checks">
                 {results.data.results.map((r) => (
                   <tr key={r.id}>
                     <td className={`${td} whitespace-nowrap text-muted`}>{fmtDateTime(loc, r.probe_at)}</td>
+                    <td className={td} title={r.node_id}>{nodeName(r.node_id)}</td>
                     <td className={td}>{r.success
                       ? <span className="text-up">{r.slow ? t('status.DEGRADED') : t('mdetail.success')}</span>
                       : <span className="text-down">{t(`err.${r.error_category || 'unknown'}` as Key)}</span>}</td>

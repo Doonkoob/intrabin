@@ -76,6 +76,53 @@ export function LatencyChart({ points, height = 180, showMax = false }: { points
   )
 }
 
+/** Per-node averages share one time/latency scale. Failed and missing buckets break the line. */
+export function NodeLatencyChart({ series, names, bucketSeconds }: { series: { node_id: string; points: LatencyPoint[] }[]; names: Record<string, string>; bucketSeconds: number }) {
+  const { loc, t } = usePrefs()
+  const [hidden, setHidden] = useState<string[]>([])
+  const palette = ['#2563eb', '#db2777', '#059669', '#d97706', '#7c3aed', '#0891b2', '#dc2626', '#64748b']
+  const all = series.flatMap((s) => s.points)
+  if (!all.length) return <p className="text-sm text-muted">{t('common.noData')}</p>
+  const times = all.map((p) => Date.parse(p.at))
+  const start = Math.min(...times), end = Math.max(start + 1, ...times)
+  const visible = series.filter((s) => !hidden.includes(s.node_id))
+  const max = Math.max(1, ...visible.flatMap((s) => s.points.filter((p) => p.total > p.failures).map((p) => p.avg_ms))) * 1.1
+  const x = (p: LatencyPoint) => 50 + (Date.parse(p.at) - start) / (end - start) * 735
+  const y = (v: number) => 170 - v / max * 155
+  return <div data-testid="node-latency-chart">
+    <svg viewBox="0 0 800 200" className="h-52 w-full" role="img" aria-label={t('mdetail.nodeChart')}>
+      {[0, max / 2, max].map((v) => <g key={v}>
+        <line x1="50" x2="785" y1={y(v)} y2={y(v)} stroke="var(--border)" strokeDasharray="3 4" />
+        <text x="44" y={y(v) + 4} textAnchor="end" fontSize="11" fill="var(--muted)">{fmtNumber(loc, Math.round(v))}</text>
+      </g>)}
+      {series.map((s, i) => {
+        if (hidden.includes(s.node_id)) return null
+        let previous: LatencyPoint | undefined
+        const path = s.points.map((p) => {
+          if (p.total <= p.failures) { previous = undefined; return '' }
+          const join = previous && Date.parse(p.at) - Date.parse(previous.at) <= bucketSeconds * 1500
+          previous = p
+          return `${join ? 'L' : 'M'}${x(p)},${y(p.avg_ms)}`
+        }).join(' ')
+        const color = palette[i % palette.length]
+        return <g key={s.node_id} data-node-id={s.node_id}>
+          <path d={path} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeDasharray={i >= palette.length ? '6 3' : undefined} />
+          {s.points.map((p) => <circle key={p.at} cx={x(p)} cy={p.total > p.failures ? y(p.avg_ms) : 170} r="3" fill={color} fillOpacity={p.total > p.failures ? 1 : 0.25} tabIndex={0}>
+            <title>{names[s.node_id] || s.node_id.slice(0, 8)} · {fmtDate(loc, p.at)} {fmtTime(loc, p.at)} · {fmtMs(loc, p.total > p.failures ? p.avg_ms : null)} · {t('mdetail.failures')}: {p.failures}/{p.total}</title>
+          </circle>)}
+        </g>
+      })}
+      <text x="50" y="193" fontSize="11" fill="var(--muted)">{fmtDate(loc, new Date(start).toISOString())} {fmtTime(loc, new Date(start).toISOString())}</text>
+      <text x="785" y="193" textAnchor="end" fontSize="11" fill="var(--muted)">{fmtDate(loc, new Date(end).toISOString())} {fmtTime(loc, new Date(end).toISOString())}</text>
+    </svg>
+    <div className="flex flex-wrap gap-3 text-xs">
+      {series.map((s, i) => <button key={s.node_id} type="button" aria-pressed={!hidden.includes(s.node_id)} onClick={() => setHidden((h) => h.includes(s.node_id) ? h.filter((id) => id !== s.node_id) : [...h, s.node_id])} className={`inline-flex items-center gap-1.5 rounded px-1 py-1 ${hidden.includes(s.node_id) ? 'opacity-40' : ''}`}>
+        <span className="h-0.5 w-4" style={{ background: palette[i % palette.length] }} />{names[s.node_id] || s.node_id.slice(0, 8)}
+      </button>)}
+    </div>
+  </div>
+}
+
 function barColor(b: DailyBucket) {
   if (b.availability === null) return b.maintenance_rounds > 0 ? 'var(--info)' : 'var(--border)'
   if (b.availability >= 99.9) return 'var(--up)'

@@ -249,6 +249,7 @@ func (s *Server) Handler() http.Handler {
 		{"POST /api/v1/system/update/check", auth.PermSettingsManage, false, s.handleUpdateCheck},
 		{"POST /api/v1/system/update/dismiss", auth.PermSettingsManage, false, s.handleUpdateDismiss},
 		{"POST /api/v1/system/update/apply", auth.PermSettingsManage, false, s.handleUpdateApply},
+		{"POST /api/v1/system/update/cluster/retry", auth.PermSettingsManage, true, s.handleUpdateRetry},
 		{"GET /api/v1/settings", auth.PermView, true, s.handleGetSettings},
 		{"PATCH /api/v1/settings", auth.PermSettingsManage, true, s.handleUpdateSettings},
 	}

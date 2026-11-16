@@ -123,8 +123,8 @@ newer than the installed one can be requested from the UI. Progress and the log 
 only names a version, which the agent validates.
 
 The agent is installed by `scripts/install.sh` (re-run it on existing installations). Without it,
-the update dialog shows the command to run instead. In a cluster, update each node from its own
-address, workers first.
+the update dialog shows the command to run instead. From v0.2.0 onward, starting an update on
+the leader also updates the other members sequentially; see the first-upgrade instructions below.
 
 ### From the command line
 ```bash
@@ -164,3 +164,27 @@ retention period.
 * `GET /api/v1/readiness` — database reachability.
 * `GET /metrics` — Prometheus metrics; requires `Authorization: Bearer $INTRABIN_METRICS_TOKEN`
   or an authenticated admin session.
+
+### Cluster rolling updates (v0.2.0+)
+Start an update from Settings on the active leader. The plan is committed through Raft before
+that server restarts. After it returns, the current leader updates remaining members one at a
+time (non-voters, then voters). A leadership change resumes the same plan. Progress and errors
+appear in Settings; failed updates stop until an administrator chooses **Retry remaining nodes**.
+Every server needs the installer-managed host update agent and outbound GitHub/registry access.
+The confirmed release is pinned for the whole rollout. New members added after confirmation
+are not included; update them separately. Removed members stop the plan.
+
+**First upgrade:** versions before v0.2.0 cannot accept peer update commands. Upgrade every
+existing node once to v0.2.0 from its own Update button or with
+`sudo intrabin update --to v0.2.0`. If the UI says the agent is missing, run the installer again.
+Future updates started on the leader include all members automatically. A one- or two-voter
+cluster temporarily loses management availability during a voter restart; all rollouts pause
+while quorum or member reachability is missing. Startup failures require manual recovery;
+backups are retained and cluster databases are never automatically rolled back.
+
+### Publishing a release
+Choose `vMAJOR.MINOR.PATCH`, update `VERSION` and `CHANGELOG.md`, and add
+`docs/releases/vMAJOR.MINOR.PATCH.md`. Run the Go and UI checks, commit and push main, then
+push the matching tag. The release workflow checks the version, publishes both architectures
+of the app and runner images, then publishes the GitHub release with those notes. Settings
+shows the current version, latest release and up to 20 recent stable releases with their changes.
