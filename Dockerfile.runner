@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # Isolated Action Runner image: the intrabin binary in `runner` mode plus Bash and Python 3.
 # It has no access to the control-plane database, master key or Docker socket.
 ARG RUNTIME_BASE=python:3.13-slim-bookworm

@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # ---- web UI ----
 FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 # Optional npm registry mirror for restricted networks, e.g. --build-arg NPM_REGISTRY=https://registry.npmmirror.com
