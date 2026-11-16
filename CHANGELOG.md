@@ -3,6 +3,11 @@
 Intrabin uses semantic release versions (`vMAJOR.MINOR.PATCH`). Each release has a matching
 `VERSION` file, Git tag, container image tag and release note in `docs/releases/`.
 
+## v0.2.5 — 2026-11-17
+
+Source builds use `https://goproxy.cn` for Go dependencies by default, with the same configurable
+proxy for the application and Action Runner. See [release notes](docs/releases/v0.2.5.md).
+
 ## v0.2.4 — 2026-11-17
 
 Recover older updaters, switch source installations to prebuilt images, and download images

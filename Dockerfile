@@ -18,8 +18,8 @@ ARG TARGETOS TARGETARCH
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
-# Optional Go module proxy for restricted networks, e.g. --build-arg GOPROXY_URL=https://goproxy.io,direct
-ARG GOPROXY_URL=
+# Go module proxy; override with --build-arg GOPROXY_URL=... when needed.
+ARG GOPROXY_URL=https://goproxy.cn
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=secret,id=extra_ca,required=false \

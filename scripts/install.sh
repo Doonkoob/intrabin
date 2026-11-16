@@ -21,7 +21,7 @@
 #   --port N             host port for plain HTTP mode (default 8080)
 #   --no-runner          do not install the Action Runner (workflow script steps)
 #   --docker-mirror URL  Docker registry mirror (e.g. https://docker.arvancloud.ir)
-#   --goproxy URL        Go module proxy for the image build (e.g. https://goproxy.io,direct)
+#   --goproxy URL        Go module proxy for the image build (e.g. https://goproxy.cn)
 #   --npm-registry URL   npm registry for the image build
 #   --release TAG        pull the published images for TAG (e.g. v1.0.0) instead of building
 #                        (also checks out that tag); without it the images are built from source
@@ -73,7 +73,7 @@ Options:
   --port N             host port for plain HTTP mode (default 8080)
   --no-runner          do not install the Action Runner (workflow script steps)
   --docker-mirror URL  Docker registry mirror (e.g. https://docker.arvancloud.ir)
-  --goproxy URL        Go module proxy for the image build (e.g. https://goproxy.io,direct)
+  --goproxy URL        Go module proxy for the image build (e.g. https://goproxy.cn)
   --npm-registry URL   npm registry for the image build
   --skip-build         use images that are already present (e.g. loaded with `docker load`)
   --dir PATH           install directory (default /opt/intrabin)

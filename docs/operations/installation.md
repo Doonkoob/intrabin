@@ -33,7 +33,7 @@ Without it the images are built from source (about 1.5 GB RAM and a few minutes)
 
 Restricted networks: `--docker-mirror https://mirror.example` (Docker registry mirror, written to
 `/etc/docker/daemon.json` only when that file is empty), `--goproxy` and `--npm-registry` (used
-while building the image). Re-running the installer without `--domain`/`--no-domain` keeps the
+while building the image; Go defaults to `https://goproxy.cn`, configurable with `GOPROXY_URL` in `.env`). Re-running the installer without `--domain`/`--no-domain` keeps the
 existing configuration and updates the code. Updates replace local edits to tracked files; put
 custom Compose settings in `/opt/intrabin/compose.override.yaml`, which is never overwritten.
 

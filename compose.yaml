@@ -13,7 +13,7 @@ services:
       context: .
       args:
         VERSION: ${INTRABIN_VERSION:-dev}
-        GOPROXY_URL: ${GOPROXY_URL:-}
+        GOPROXY_URL: ${GOPROXY_URL:-https://goproxy.cn}
         NPM_REGISTRY: ${NPM_REGISTRY:-}
     restart: unless-stopped
     env_file: .env
@@ -63,7 +63,7 @@ services:
       dockerfile: Dockerfile.runner
       args:
         VERSION: ${INTRABIN_VERSION:-dev}
-        GOPROXY_URL: ${GOPROXY_URL:-}
+        GOPROXY_URL: ${GOPROXY_URL:-https://goproxy.cn}
     restart: unless-stopped
     environment:
       INTRABIN_RUNNER_TOKEN: ${INTRABIN_RUNNER_TOKEN:-}  # required (>= 24 chars); the runner refuses to start without it
