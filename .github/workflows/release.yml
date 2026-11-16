@@ -1,21 +1,30 @@
 name: Release images
-# Runs only when a version tag (v1.2.3) is pushed. Publishes multi-arch images to GitHub's container
-# registry so the installer can pull them (install.sh --release v1.2.3) instead of building.
+# Tags publish images and archives; manual dispatch repairs archives of an existing image release.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing release tag to publish or repair
+        required: true
+        type: string
 permissions:
   contents: write # the GitHub release that the in-app update check reads
   packages: write
 jobs:
   images:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_VERSION }}
       - name: Validate version and release notes
         run: |
-          test "$(cat VERSION)" = "${GITHUB_REF_NAME}"
-          test -s "docs/releases/${GITHUB_REF_NAME}.md"
+          test "$(cat VERSION)" = "${RELEASE_VERSION}"
+          test -s "docs/releases/${RELEASE_VERSION}.md"
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -30,25 +39,27 @@ jobs:
           echo "app=ghcr.io/${owner}/intrabin" >> "$GITHUB_OUTPUT"
           echo "runner=ghcr.io/${owner}/intrabin-runner" >> "$GITHUB_OUTPUT"
       - name: Build and push Intrabin
+        if: github.event_name == 'push'
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 --push \
-            --build-arg VERSION="${GITHUB_REF_NAME}" --build-arg COMMIT="${GITHUB_SHA}" \
-            -t "${{ steps.names.outputs.app }}:${GITHUB_REF_NAME}" -t "${{ steps.names.outputs.app }}:latest" .
+            --build-arg VERSION="${RELEASE_VERSION}" --build-arg COMMIT="$(git rev-parse HEAD)" \
+            -t "${{ steps.names.outputs.app }}:${RELEASE_VERSION}" -t "${{ steps.names.outputs.app }}:latest" .
       - name: Build and push the Action Runner
+        if: github.event_name == 'push'
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 --push -f Dockerfile.runner \
-            --build-arg VERSION="${GITHUB_REF_NAME}" \
-            -t "${{ steps.names.outputs.runner }}:${GITHUB_REF_NAME}" -t "${{ steps.names.outputs.runner }}:latest" .
+            --build-arg VERSION="${RELEASE_VERSION}" \
+            -t "${{ steps.names.outputs.runner }}:${RELEASE_VERSION}" -t "${{ steps.names.outputs.runner }}:latest" .
       - name: GitHub release
         # Created after the images are published, so the update notice never points at a release
         # whose images are missing. Pre-release tags (v1.2.0-rc1) are never offered as updates.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 && exit 0
+          gh release view "${RELEASE_VERSION}" >/dev/null 2>&1 && exit 0
           pre=""
-          case "${GITHUB_REF_NAME}" in *-*) pre="--prerelease" ;; esac
-          gh release create "${GITHUB_REF_NAME}" --draft --verify-tag --notes-file "docs/releases/${GITHUB_REF_NAME}.md" --title "Intrabin ${GITHUB_REF_NAME}" $pre
+          case "${RELEASE_VERSION}" in *-*) pre="--prerelease" ;; esac
+          gh release create "${RELEASE_VERSION}" --draft --verify-tag --notes-file "docs/releases/${RELEASE_VERSION}.md" --title "Intrabin ${RELEASE_VERSION}" $pre
       - name: Publish downloadable images for restricted registries
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -59,14 +70,23 @@ jobs:
             for package in intrabin intrabin-runner; do
               image="$APP_IMAGE"
               if [ "$package" = intrabin-runner ]; then image="$RUNNER_IMAGE"; fi
-              docker pull --platform "linux/$arch" "$image:$GITHUB_REF_NAME"
+              docker pull --platform "linux/$arch" "$image:$RELEASE_VERSION"
               archive="$package-linux-$arch.tar.gz"
-              docker save "$image:$GITHUB_REF_NAME" | gzip -1 > "$archive"
-              gh release upload "$GITHUB_REF_NAME" "$archive" --clobber
+              docker save --platform "linux/$arch" "$image:$RELEASE_VERSION" | gzip -1 > "$archive"
+              python3 - "$archive" "$arch" <<'PY_VERIFY'
+          import json, sys, tarfile
+          with tarfile.open(sys.argv[1]) as archive:
+              manifests = json.load(archive.extractfile("manifest.json"))
+              assert len(manifests) == 1, "Archive must contain exactly one image"
+              config = json.load(archive.extractfile(manifests[0]["Config"]))
+              assert config["architecture"] == sys.argv[2], config["architecture"]
+          PY_VERIFY
+              docker image load --input "$archive" >/dev/null
+              gh release upload "$RELEASE_VERSION" "$archive" --clobber
               rm "$archive"
             done
           done
       - name: Publish complete release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "$GITHUB_REF_NAME" --draft=false
+        run: gh release edit "$RELEASE_VERSION" --draft=false
