@@ -120,6 +120,13 @@ export function Layout() {
       <aside className="fixed inset-y-0 start-0 z-30 hidden app-sidebar w-60 border-e lg:block">{sidebar}</aside>
       <dialog ref={mobileMenu} aria-label={t('nav.menu')} onClose={() => setOpen(false)} onCancel={() => setOpen(false)}
         onClick={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
+        onKeyDown={(e) => {
+          if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey) return
+          const controls = e.currentTarget.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')
+          const first = controls[0], last = controls[controls.length - 1]
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() }
+          if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() }
+        }}
         className="fixed inset-0 m-0 h-dvh max-h-none w-full max-w-none border-0 bg-transparent p-0">
           <aside className="absolute inset-y-0 start-0 app-sidebar w-64 border-e">
             <button type="button" className="absolute end-2 top-3 rounded p-1 text-[#a9bdca]" onClick={() => setOpen(false)} aria-label={t('common.close')}><X className="size-4" /></button>
