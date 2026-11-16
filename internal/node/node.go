@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -67,11 +68,26 @@ func LoadIdentity(ctx context.Context, st *storage.Store, nameOverride string) (
 	if name == "" {
 		name = "intrabin-" + id[:8]
 	}
+	if err := st.SetSetting(ctx, "node.name", name); err != nil {
+		return nil, err
+	}
 	created, _ := st.GetSetting(ctx, "node.created_at")
 	ct, _ := time.Parse(time.RFC3339, created)
 	n := &Node{Identity: Identity{ID: id, Name: name, CreatedAt: ct}, StartedAt: time.Now().UTC()}
 	n.role.Store(RoleStandalone)
 	return n, nil
+}
+
+// Label distinguishes installations even when their configured host names are identical.
+// The persistent ID remains the identity; a URL or IP is only a display address.
+func Label(id, name, address string) string {
+	if address = strings.TrimSpace(address); address == "" {
+		address = name
+	}
+	if address == "" {
+		return id
+	}
+	return address + " · " + id[:min(8, len(id))]
 }
 
 func (n *Node) Role() Role     { return n.role.Load().(Role) }

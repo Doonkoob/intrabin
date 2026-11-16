@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -123,11 +124,29 @@ func (m *Manager) forward(ctx context.Context, cmd *controlplane.Command) error 
 		return fmt.Errorf("%w: %v", controlplane.ErrNoQuorum, err)
 	}
 	// Read-your-writes: wait until this node has applied the entry.
-	deadline := time.Now().Add(5 * time.Second)
-	for r := m.raftNode(); r != nil && r.AppliedIndex() < rep.Index && time.Now().Before(deadline); {
-		time.Sleep(10 * time.Millisecond)
+	applyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := m.waitApplied(applyCtx, rep.Index); err != nil {
+		return fmt.Errorf("%w: local state has not caught up: %v", controlplane.ErrNoQuorum, err)
 	}
 	return controlplane.CodeError(rep.Code)
+}
+
+// Raft's AppliedIndex can advance before the FSM has finished writing SQLite. Sessions and
+// join readiness must wait for the durable marker written after command execution instead.
+func (m *Manager) waitApplied(ctx context.Context, index uint64) error {
+	for {
+		value, err := m.opt.Store.GetSetting(ctx, appliedIndexKey)
+		applied, _ := strconv.ParseUint(value, 10, 64)
+		if index == 0 || (err == nil && applied >= index) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 func (m *Manager) handleForwardApply(w http.ResponseWriter, r *http.Request, peer string) {

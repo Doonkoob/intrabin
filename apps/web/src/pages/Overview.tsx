@@ -15,7 +15,7 @@ interface Overview {
   latency_24h: LatencyPoint[]
   health_30d: DailyBucket[]
   node: NodeInfo
-  cluster: { mode: string; nodes_total: number; nodes_online: number; leader: string; quorum: string }
+  cluster: { mode: string; nodes_total: number; nodes_online: number; leader: string; quorum: string; gate?: { reachable: number; voters: number; required: number } }
 }
 
 export function OverviewPage() {
@@ -39,6 +39,7 @@ export function OverviewPage() {
         <Stat icon={<Activity />} label={t('overview.activeIncidents')} value={fmtNumber(loc, data.incidents.open)} tone={data.incidents.open ? 'down' : undefined} />
         <Stat icon={<Gauge />} label={t('overview.avgUptime')} value={fmtPct(loc, data.uptime_24h_avg)} />
       </div>
+      {data.monitors.total === 0 && <div className="mt-4"><NodeSummary data={data} /></div>}
       {data.monitors.total === 0 ? (
         <Card className="mt-4">
           <Empty icon={<Activity className="size-8" />} action={can('monitor.manage') && <Link to="/monitors/new"><Button variant="primary">{t('overview.createFirst')}</Button></Link>}>
@@ -48,15 +49,7 @@ export function OverviewPage() {
       ) : (
         <div className="mt-6 grid gap-5 xl:grid-cols-3">
           <Card title={t('overview.responseTime')} className="xl:col-span-2"><LatencyChart points={data.latency_24h} /></Card>
-          <Card title={t('overview.node')}>
-            <dl className="grid grid-cols-2 gap-y-2 text-sm">
-              <dt className="text-muted">{t('cluster.mode')}</dt><dd>{t('cluster.standalone')}</dd>
-              <dt className="text-muted">{t('overview.leader')}</dt><dd className="truncate">{data.cluster.leader}</dd>
-              <dt className="text-muted">{t('overview.nodes')}</dt><dd className="tabular">{fmtNumber(loc, data.cluster.nodes_online)}/{fmtNumber(loc, data.cluster.nodes_total)}</dd>
-              <dt className="text-muted">{t('overview.quorum')}</dt><dd>{t('overview.quorumNA')}</dd>
-              <dt className="text-muted">{t('cluster.version')}</dt><dd className="ltr text-start">{data.node.version}</dd>
-            </dl>
-          </Card>
+          <NodeSummary data={data} />
           <Card title={t('overview.health30')} className="xl:col-span-2"><UptimeBars days={data.health_30d} /></Card>
           <Card title={t('overview.recentIncidents')} bodyClass="p-0">
             {data.incidents.recent.length === 0 ? <p className="p-4 text-sm text-muted">{t('overview.noIncidents')}</p> : (
@@ -91,6 +84,23 @@ export function OverviewPage() {
         </div>
       )}
     </>
+  )
+}
+
+function NodeSummary({ data }: { data: Overview }) {
+  const { t, loc } = usePrefs()
+  const clustered = data.cluster.mode === 'cluster'
+  return (
+    <Card title={t('overview.node')}>
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm" data-testid="cluster-summary">
+        <dt className="text-muted">{t('cluster.mode')}</dt><dd data-testid="overview-mode">{t(clustered ? 'overview.clusterMode' : 'cluster.standalone')}</dd>
+        <dt className="text-muted">{t('cluster.address')}</dt><dd className="break-all" dir="auto">{data.node.node_label || data.node.node_name}</dd>
+        <dt className="text-muted">{t('overview.leader')}</dt><dd className="break-all" dir="auto">{data.cluster.leader || '—'}</dd>
+        <dt className="text-muted">{t('overview.nodes')}</dt><dd className="tabular" data-testid="overview-nodes">{fmtNumber(loc, data.cluster.nodes_online)}/{fmtNumber(loc, data.cluster.nodes_total)}</dd>
+        <dt className="text-muted">{t('overview.quorum')}</dt><dd data-testid="overview-quorum">{clustered ? t(data.cluster.quorum === 'healthy' ? 'overview.quorumHealthy' : 'overview.quorumUnavailable') : t('overview.quorumNA')}{clustered && data.cluster.gate && <span className="ms-1 tabular">({fmtNumber(loc, data.cluster.gate.reachable)}/{fmtNumber(loc, data.cluster.gate.voters)})</span>}</dd>
+        <dt className="text-muted">{t('cluster.version')}</dt><dd className="ltr text-start">{data.node.version}</dd>
+      </dl>
+    </Card>
   )
 }
 

@@ -3,6 +3,15 @@
 A cluster is a set of Intrabin nodes that share one control plane (users, monitors, incidents,
 history) through Raft and probe from several locations. Every node runs the same binary.
 
+Nodes are identified by a persistent UUID, which survives updates. The panel displays their public
+URL or cluster address plus a short ID, so identical hostnames remain distinguishable. The member
+list reports each node's running version from live heartbeats.
+
+After joining, sign in on any member with the leader's accounts. Joining replaces the selected
+local account data with replicated cluster accounts and waits until that state is available.
+Password changes are replicated across the cluster; follower sessions are confirmed locally
+before login returns success.
+
 ## Sizing
 | Voters | Tolerated voter failures | Notes |
 |---|---|---|

@@ -27,6 +27,8 @@ type peerView struct {
 	LeaderID string           `json:"leader_id"`
 	Heard    map[string]int64 `json:"heard"` // peer id → unix ms of last bidirectional proof
 	Version  string           `json:"version"`
+	Name     string           `json:"name,omitempty"`
+	APIURL   string           `json:"api_url,omitempty"`
 	Outbox   int              `json:"outbox"`
 }
 
@@ -66,7 +68,7 @@ type pingMsg struct {
 
 func (m *Manager) selfView() peerView {
 	r := m.raftNode()
-	v := peerView{Heard: m.mesh.heard(m.opt.MeshFreshness), Version: versionString()}
+	v := peerView{Heard: m.mesh.heard(m.opt.MeshFreshness), Version: versionString(), Name: m.opt.Node.Identity.Name, APIURL: m.opt.APIURL}
 	if r != nil {
 		v.Applied = r.AppliedIndex()
 		v.State = r.State().String()

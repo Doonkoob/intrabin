@@ -129,7 +129,7 @@ func (m *Manager) selfMeta() *model.ClusterNode {
 func (m *Manager) waitLeader(ctx context.Context, d time.Duration) error {
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		if r := m.raftNode(); r != nil && r.State() == raft.Leader && m.GateOK() {
+		if r := m.raftNode(); r != nil && r.State() == raft.Leader && m.GateOK() && m.opt.Node.Role() == node.RoleLeader {
 			return nil
 		}
 		select {
@@ -189,11 +189,12 @@ type joinRequest struct {
 }
 
 type joinResponse struct {
-	ClusterID  string      `json:"cluster_id"`
-	CACert     []byte      `json:"ca_cert"`
-	NodeCert   []byte      `json:"node_cert"`
-	WrappedKey *WrappedKey `json:"wrapped_key"`
-	LeaderID   string      `json:"leader_id"`
+	ClusterID    string      `json:"cluster_id"`
+	CACert       []byte      `json:"ca_cert"`
+	NodeCert     []byte      `json:"node_cert"`
+	WrappedKey   *WrappedKey `json:"wrapped_key"`
+	LeaderID     string      `json:"leader_id"`
+	AppliedIndex uint64      `json:"applied_index,omitempty"`
 }
 
 func keyInfo(clusterID string) string { return "intrabin-cluster-data-key:" + clusterID }
@@ -261,7 +262,7 @@ func (m *Manager) handleJoin(w http.ResponseWriter, r *http.Request) {
 	_ = m.opt.CP.UpsertClusterNode(ctx, &model.ClusterNode{ID: req.NodeID, Name: req.NodeName, ClusterAddr: req.Advertise, APIURL: req.APIURL, Location: req.Location, Version: req.Version})
 	_, lid := m.leaderAddr()
 	m.log.Info("node joined as non-voter", "node_id", req.NodeID, "name", req.NodeName, "addr", req.Advertise)
-	writeJSON(w, http.StatusOK, joinResponse{ClusterID: m.clusterID, CACert: m.caPEM, NodeCert: certPEM, WrappedKey: wk, LeaderID: lid})
+	writeJSON(w, http.StatusOK, joinResponse{ClusterID: m.clusterID, CACert: m.caPEM, NodeCert: certPEM, WrappedKey: wk, LeaderID: lid, AppliedIndex: m.raftNode().AppliedIndex()})
 }
 
 func (m *Manager) caKey(ctx context.Context) ([]byte, error) {
@@ -359,6 +360,24 @@ func (m *Manager) Join(ctx context.Context, token, advertise string, action Data
 	m.opt.CP.X.NotifyExternal("state.restore")
 	if err := m.start(false); err != nil {
 		return nil, err
+	}
+	// A successful join must include the leader's users/password hashes, not just membership.
+	// Older leaders omit AppliedIndex; the replicated cluster ID still proves seed restoration.
+	readyCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	for {
+		cid, _ := m.opt.Store.GetSetting(readyCtx, keyCID)
+		if cid == resp.ClusterID && m.opt.Node.Role() != node.RoleNoQuorum {
+			if err := m.waitApplied(readyCtx, resp.AppliedIndex); err != nil {
+				return res, fmt.Errorf("joined cluster but initial synchronization is pending; retry sign-in after connectivity recovers: %w", err)
+			}
+			break
+		}
+		select {
+		case <-readyCtx.Done():
+			return res, fmt.Errorf("joined cluster but initial synchronization is pending; retry sign-in after connectivity recovers: %w", readyCtx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
 	m.log.Info("joined cluster as non-voter", "cluster_id", resp.ClusterID, "export", res.BackupPath)
 	return res, nil

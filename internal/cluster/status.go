@@ -13,6 +13,7 @@ import (
 type MemberStatus struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
+	Label        string `json:"label"`
 	Address      string `json:"address"`
 	APIURL       string `json:"api_url"`
 	Location     string `json:"location"`
@@ -54,6 +55,14 @@ type GateStatus struct {
 	Voters    int  `json:"voters"`
 	Reachable int  `json:"reachable"`
 	Required  int  `json:"required"`
+}
+
+func (m *Manager) LocalLabel() string {
+	address := m.opt.APIURL
+	if address == "" {
+		address = m.advertiseAddr()
+	}
+	return node.Label(m.opt.Node.Identity.ID, m.opt.Node.Identity.Name, address)
 }
 
 // Status returns the current cluster status.
@@ -117,6 +126,7 @@ func (m *Manager) Status(ctx context.Context) *Status {
 			ms.Suffrage = "voter"
 		}
 		if ms.Self {
+			ms.Name, ms.APIURL = m.opt.Node.Identity.Name, m.opt.APIURL
 			ms.Version = versionString()
 			ms.Reachable = true
 			ms.AppliedIndex = r.AppliedIndex()
@@ -135,6 +145,11 @@ func (m *Manager) Status(ctx context.Context) *Status {
 				ms.LastSeenMs = &ago
 				ms.AppliedIndex, ms.RaftState, ms.Outbox = v.Applied, v.State, v.Outbox
 				ms.Version = v.Version
+				if v.Name != "" {
+					// Name is present in the new heartbeat format, including when a previously
+					// configured public URL has been cleared. Legacy peers use stored metadata.
+					ms.Name, ms.APIURL = v.Name, v.APIURL
+				}
 				if time.Since(v.At) <= 3*m.opt.MeshFreshness {
 					st.Mesh[id] = map[string]bool{}
 					for p := range v.Heard {
@@ -143,9 +158,14 @@ func (m *Manager) Status(ctx context.Context) *Status {
 				}
 			}
 		}
+		address := ms.APIURL
+		if address == "" {
+			address = ms.Address
+		}
+		ms.Label = node.Label(id, ms.Name, address)
 		st.Members = append(st.Members, ms)
 	}
-	sort.Slice(st.Members, func(i, j int) bool { return st.Members[i].Name < st.Members[j].Name })
+	sort.Slice(st.Members, func(i, j int) bool { return st.Members[i].Label < st.Members[j].Label })
 	switch {
 	case voters == 1 && len(servers) > 1:
 		st.Warnings = append(st.Warnings, "single_voter")

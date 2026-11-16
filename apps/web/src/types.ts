@@ -17,6 +17,7 @@ export interface User {
 export interface NodeInfo {
   node_id: string
   node_name: string
+  node_label?: string
   role: 'STANDALONE' | 'FOLLOWER' | 'LEADER' | 'NO_QUORUM'
   can_manage: boolean
   version: string
@@ -214,6 +215,7 @@ export interface CertInfo { id: string; name: string; target: string; expires_at
 export interface ClusterMember {
   id: string
   name: string
+  label?: string
   address: string
   api_url: string
   location: string

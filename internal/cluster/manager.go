@@ -306,6 +306,8 @@ func (m *Manager) start(bootstrap bool) error {
 	go m.httpSrv.Serve(m.mux.http) //nolint:errcheck
 	m.opt.CP.SetApplier(m)
 	m.enabled.Store(true)
+	// Never expose a clustered node as standalone while Raft and its initial state catch up.
+	m.opt.Node.SetRole(node.RoleNoQuorum)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.wg.Add(3)

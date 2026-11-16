@@ -12,7 +12,7 @@ function NodeCard({ node }: { node: NodeInfo }) {
   const { t, loc } = usePrefs()
   return (
     <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
-      <dt className="text-muted">{t('cluster.nodeName')}</dt><dd className="font-medium">{node.node_name}</dd>
+      <dt className="text-muted">{t('cluster.nodeName')}</dt><dd className="break-all font-medium">{node.node_label || node.node_name}</dd>
       <dt className="text-muted">{t('cluster.nodeId')}</dt><dd className="break-all font-mono text-xs"><span className="ltr inline-block">{node.node_id}</span></dd>
       <dt className="text-muted">{t('cluster.role')}</dt><dd><RoleBadge role={node.role} /></dd>
       <dt className="text-muted">{t('cluster.version')}</dt><dd><span className="ltr inline-block">{node.version} ({node.commit.slice(0, 7)})</span></dd>
@@ -70,7 +70,7 @@ function LeaderDialog({ c, target, onClose, onDone }: { c: ClusterStatus; target
   }
   return (
     <Dialog open={!!target} onClose={onClose}
-      title={target && target !== 'select' ? t('cluster.leaderDialog.title', { name: target.name }) : t('cluster.leaderDialog.titleSelect')}
+      title={target && target !== 'select' ? t('cluster.leaderDialog.title', { name: target.label || target.name }) : t('cluster.leaderDialog.titleSelect')}
       footer={<><Button onClick={onClose}>{t('common.cancel')}</Button><Button variant="primary" loading={busy} disabled={!pick} onClick={run} data-testid="make-leader-confirm">{t('cluster.makeLeader')}</Button></>}>
       <div className="flex flex-col gap-4 text-sm">
         {err && <ErrorBanner error={err} />}
@@ -78,7 +78,7 @@ function LeaderDialog({ c, target, onClose, onDone }: { c: ClusterStatus; target
         {target === 'select' && (candidates.length > 0 ? (
           <Field label={t('cluster.leaderDialog.target')} htmlFor="new-leader">
             <Select id="new-leader" value={pick} onChange={(e) => setPick(e.target.value)}>
-              {candidates.map((m) => <option key={m.id} value={m.id}>{m.name}{m.suffrage === 'nonvoter' ? ` (${t('cluster.nonvoter')})` : ''}</option>)}
+              {candidates.map((m) => <option key={m.id} value={m.id}>{m.label || m.name}{m.suffrage === 'nonvoter' ? ` (${t('cluster.nonvoter')})` : ''}</option>)}
             </Select>
           </Field>
         ) : <p className="text-down">{t('cluster.leaderDialog.noTargets')}</p>)}
@@ -122,7 +122,7 @@ function AddressDialog({ m, onClose, onDone }: { m: ClusterMember | null; onClos
     }
   }
   return (
-    <Dialog open={!!m} onClose={onClose} title={m ? t('cluster.addressDialog.title', { name: m.name }) : ''}
+    <Dialog open={!!m} onClose={onClose} title={m ? t('cluster.addressDialog.title', { name: m.label || m.name }) : ''}
       footer={<><Button onClick={onClose}>{t('common.cancel')}</Button><Button variant="primary" type="submit" form="addr-form" loading={busy}>{t('cluster.addressDialog.save')}</Button></>}>
       <form id="addr-form" onSubmit={save} className="flex flex-col gap-4">
         {err && <ErrorBanner error={err} />}
@@ -160,7 +160,7 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
       setBusy(false)
     }
   }
-  const names = Object.fromEntries(c.members.map((m) => [m.id, m.name]))
+  const names = Object.fromEntries(c.members.map((m) => [m.id, m.label || m.name]))
   return (
     <>
       {c.warnings.length > 0 && (
@@ -178,7 +178,7 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
           <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
             <dt className="text-muted">{t('cluster.thisNode')}</dt><dd><RoleBadge role={c.role} /></dd>
             <dt className="text-muted">{t('cluster.leader')}</dt>
-            <dd>{leader ? leader.name : <span className="text-down">{t('cluster.noLeader')}</span>}
+            <dd className="break-all">{leader ? leader.label || leader.name : <span className="text-down">{t('cluster.noLeader')}</span>}
               {c.leader_api_url && !leader?.self && <a className="ms-2 inline-flex items-center gap-1 text-accent hover:underline" href={c.leader_api_url}>{t('cluster.openLeader')}<ExternalLink className="size-3.5" /></a>}
             </dd>
             <dt className="text-muted">{t('cluster.clusterId')}</dt><dd className="break-all font-mono text-xs"><span className="ltr inline-block">{c.cluster_id}</span></dd>
@@ -197,18 +197,18 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
           )}
         </Card>
       </div>
-      <Card title={t('cluster.members')} bodyClass="p-0">
+      <Card title={t('cluster.members')} bodyClass="p-0" className="overflow-hidden">
         <Table>
           <thead><tr>
             <th className={th}>{t('cluster.nodeName')}</th><th className={th}>{t('cluster.suffrage')}</th><th className={th}>{t('cluster.connectivity')}</th>
             <th className={th}>{t('cluster.lastSeen')}</th><th className={th}>{t('cluster.applied')}</th><th className={th}>{t('cluster.outbox')}</th>
-            <th className={th}>{t('cluster.address')}</th>{admin && <th className={th}><span className="sr-only">{t('common.actions')}</span></th>}
+            <th className={th}>{t('cluster.version')}</th><th className={th}>{t('cluster.address')}</th>{admin && <th className={th}><span className="sr-only">{t('common.actions')}</span></th>}
           </tr></thead>
           <tbody>
             {c.members.map((m) => (
-              <tr key={m.id} data-testid={`member-${m.name}`}>
+              <tr key={m.id} data-testid={`member-${m.id}`}>
                 <td className={td}>
-                  <div className="font-medium">{m.name}{m.self && <span className="ms-2 text-xs text-muted">({t('cluster.thisNodeShort')})</span>}</div>
+                  <div className="font-medium">{m.label || m.name}{m.self && <span className="ms-2 text-xs text-muted">({t('cluster.thisNodeShort')})</span>}</div>
                   <div className="text-xs text-muted">{m.leader ? t('roleName.LEADER') : m.raft_state ? t(`raft.${m.raft_state}` as Key) : '—'}{m.location && ` · ${m.location}`}</div>
                 </td>
                 <td className={td}>{m.suffrage === 'voter' ? t('cluster.voter') : t('cluster.nonvoter')}</td>
@@ -216,7 +216,8 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
                 <td className={`${td} tabular`}>{m.self ? '—' : m.last_seen_ms == null ? t('cluster.never') : fmtDuration(loc, Math.round(m.last_seen_ms / 1000))}</td>
                 <td className={`${td} tabular`}>{fmtNumber(loc, m.applied_index)}</td>
                 <td className={`${td} tabular`}>{fmtNumber(loc, m.outbox)}</td>
-                <td className={`${td} ltr text-start font-mono text-xs`}>{m.address}</td>
+                <td className={`${td} ltr text-start font-mono text-xs`} data-testid={`version-${m.id}`}>{m.version || '—'}</td>
+                <td className={`${td} ltr text-start font-mono text-xs`}>{m.address}<div className="mt-1 text-muted">{m.id}</div></td>
                 {admin && (
                   <td className={`${td} text-end`}>
                     <div className="flex flex-wrap justify-end gap-1">
@@ -224,12 +225,12 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
                         <Button size="sm" onClick={() => setLeaderFor('select')} data-testid="step-down"><Crown className="size-3.5" />{t('cluster.stepDown')}</Button>
                       )}
                       {!m.self && !m.leader && m.reachable && (
-                        <Button size="sm" onClick={() => setLeaderFor(m)} data-testid={`make-leader-${m.name}`}><Crown className="size-3.5" />{t('cluster.makeLeader')}</Button>
+                        <Button size="sm" onClick={() => setLeaderFor(m)} data-testid={`make-leader-${m.id}`}><Crown className="size-3.5" />{t('cluster.makeLeader')}</Button>
                       )}
                       {!m.self && (m.suffrage === 'nonvoter'
                         ? <Button size="sm" onClick={() => setPending({ m, action: 'promote' })}>{t('cluster.promote')}</Button>
                         : <Button size="sm" variant="ghost" onClick={() => setPending({ m, action: 'demote' })}>{t('cluster.demote')}</Button>)}
-                      <Button size="sm" variant="ghost" onClick={() => setAddrFor(m)} data-testid={`address-${m.name}`}>{t('cluster.changeAddress')}</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setAddrFor(m)} data-testid={`address-${m.id}`}>{t('cluster.changeAddress')}</Button>
                       {!m.self && <Button size="sm" variant="ghost" className="text-down" onClick={() => setPending({ m, action: 'remove' })}>{t('common.remove')}</Button>}
                     </div>
                   </td>
@@ -244,11 +245,11 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
           <p className="mb-3 text-xs text-muted">{t('cluster.meshHelp')}</p>
           <div className="overflow-x-auto">
             <table className="text-sm" data-testid="mesh">
-              <thead><tr><th className="p-2" />{c.members.map((m) => <th key={m.id} scope="col" className="p-2 text-xs font-medium text-muted">{m.name}</th>)}</tr></thead>
+              <thead><tr><th className="p-2" />{c.members.map((m) => <th key={m.id} scope="col" className="p-2 text-xs font-medium text-muted">{m.label || m.name}</th>)}</tr></thead>
               <tbody>
                 {c.members.map((from) => (
                   <tr key={from.id}>
-                    <th scope="row" className="p-2 text-start text-xs font-medium text-muted">{from.name}</th>
+                    <th scope="row" className="p-2 text-start text-xs font-medium text-muted">{from.label || from.name}</th>
                     {c.members.map((to) => {
                       if (from.id === to.id) return <td key={to.id} className="p-2 text-center text-muted">·</td>
                       const row = c.mesh?.[from.id]
@@ -268,8 +269,8 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
         </Card>
       )}
       <ConfirmDialog open={!!pending} onClose={() => setPending(null)} onConfirm={run} busy={busy}
-        title={pending ? t(`cluster.confirm.${pending.action}.title` as Key, { name: pending.m.name }) : ''}
-        message={pending ? t(`cluster.confirm.${pending.action}.body` as Key, { name: pending.m.name }) : ''}
+        title={pending ? t(`cluster.confirm.${pending.action}.title` as Key, { name: pending.m.label || pending.m.name }) : ''}
+        message={pending ? t(`cluster.confirm.${pending.action}.body` as Key, { name: pending.m.label || pending.m.name }) : ''}
         confirmLabel={pending ? t(`cluster.${pending.action}` as Key) : ''} />
       {admin && <>
         <LeaderDialog c={c} target={leaderFor} onClose={() => setLeaderFor(null)} onDone={() => { setLeaderFor(null); reload(); void refresh() }} />

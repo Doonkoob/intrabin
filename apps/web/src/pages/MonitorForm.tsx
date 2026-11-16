@@ -311,7 +311,7 @@ export function MonitorFormPage() {
               <legend className="sr-only">{t('mform.nodes')}</legend>
               <Checkbox label={t('mform.allNodes')} checked={f.node_ids.length === 0} onChange={(v) => set('node_ids', v ? [] : members.map((m) => m.id))} />
               {f.node_ids.length > 0 && members.map((m) => (
-                <Checkbox key={m.id} label={`${m.name}${m.location ? ` · ${m.location}` : ''}`} checked={f.node_ids.includes(m.id)}
+                <Checkbox key={m.id} label={`${m.label || m.name}${m.location ? ` · ${m.location}` : ''}`} checked={f.node_ids.includes(m.id)}
                   onChange={(v) => set('node_ids', v ? [...f.node_ids, m.id] : f.node_ids.filter((x) => x !== m.id))} />
               ))}
               {err('node_ids') && <p className="text-sm text-down">{err('node_ids')}</p>}

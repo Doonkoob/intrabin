@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/intrabin/intrabin/internal/model"
 	"github.com/intrabin/intrabin/internal/monitoring"
+	"github.com/intrabin/intrabin/internal/node"
 	"github.com/intrabin/intrabin/internal/security"
 	"github.com/intrabin/intrabin/internal/storage"
 )
@@ -739,10 +740,19 @@ func (s *Server) handleMonitorStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) nodeNames() map[string]string {
-	out := map[string]string{s.node.Identity.ID: s.node.Identity.Name}
+	out := map[string]string{s.node.Identity.ID: node.Label(s.node.Identity.ID, s.node.Identity.Name, s.cfg.PublicURL)}
 	if nodes, err := s.store.ListClusterNodes(context.Background()); err == nil {
 		for _, n := range nodes {
-			out[n.ID] = n.Name
+			address := n.APIURL
+			if address == "" {
+				address = n.ClusterAddr
+			}
+			out[n.ID] = node.Label(n.ID, n.Name, address)
+		}
+	}
+	if s.cluster != nil && s.cluster.Enabled() {
+		for _, member := range s.cluster.Status(context.Background()).Members {
+			out[member.ID] = member.Label
 		}
 	}
 	return out

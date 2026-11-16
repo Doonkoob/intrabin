@@ -64,6 +64,7 @@ func newEnv(t *testing.T) *env {
 	master, _ := security.NewSecretBox(bytes.Repeat([]byte{1}, 32))
 	cp := controlplane.New(st)
 	cm := cluster.New(cluster.Options{DataDir: dir, Listen: "127.0.0.1:0", Store: st, CP: cp, DataBox: box, MasterBox: master, Node: n, Log: log})
+	t.Cleanup(cm.Shutdown)
 	mock := dnsmock.New("cf-token-123", "arvan-key-123")
 	mockSrv := httptest.NewServer(mock)
 	t.Cleanup(mockSrv.Close)
@@ -460,4 +461,93 @@ func TestClusterEndpointsStandalone(t *testing.T) {
 	if code := admin.do("POST", "/api/v1/cluster/join", map[string]any{"token": "IBJ1.x", "data_action": "export"}, &errBody); code != 403 {
 		t.Fatalf("admin join must be forbidden: %d %+v", code, errBody)
 	}
+}
+
+// Same-hostname installations must remain distinct, and joining must be ready for the
+// leader's credentials immediately (including when the joining node had its own owner).
+func TestClusterJoinCredentialsAndOverview(t *testing.T) {
+	leader, worker := newEnv(t), newEnv(t)
+	owner, oldWorker := leader.owner(), worker.owner()
+	var body any
+	if code := oldWorker.do("POST", "/api/v1/auth/password", map[string]string{"current_password": "owner-password-1", "new_password": "worker-password-1"}, &body); code != 200 {
+		t.Fatalf("worker password: %d %+v", code, body)
+	}
+	oldWorker.loadCSRF()
+	if code := owner.do("POST", "/api/v1/cluster/init", map[string]string{"advertise": leader.srv.URL}, &body); code != 200 {
+		t.Fatalf("init: %d %+v", code, body)
+	}
+	var overview struct {
+		Cluster struct {
+			Mode        string
+			NodesTotal  int `json:"nodes_total"`
+			NodesOnline int `json:"nodes_online"`
+			Quorum      string
+			Leader      string
+		}
+		Node struct {
+			Label string `json:"node_label"`
+		}
+	}
+	if code := owner.do("GET", "/api/v1/overview", nil, &overview); code != 200 || overview.Cluster.Mode != "cluster" || overview.Cluster.Quorum != "healthy" {
+		t.Fatalf("overview after init: %d %+v", code, overview)
+	}
+	var token struct{ Token string }
+	if code := owner.do("POST", "/api/v1/cluster/tokens", map[string]any{"ttl_minutes": 10}, &token); code != 201 {
+		t.Fatalf("token: %d", code)
+	}
+	if code := oldWorker.do("POST", "/api/v1/cluster/join", map[string]string{"token": token.Token, "advertise": worker.srv.URL, "data_action": "discard"}, &body); code != 200 {
+		t.Fatalf("join: %d %+v", code, body)
+	}
+	joined := worker.client()
+	if code := joined.do("POST", "/api/v1/auth/login", map[string]string{"username": "owner", "password": "owner-password-1"}, &body); code != 200 {
+		t.Fatalf("leader credentials immediately after join: %d %+v", code, body)
+	}
+	joined.loadCSRF() // The forwarded session must already exist locally, without retries.
+	if code := worker.client().do("POST", "/api/v1/auth/login", map[string]string{"username": "owner", "password": "worker-password-1"}, &body); code != 401 {
+		t.Fatalf("old worker password still accepted: %d", code)
+	}
+	var status struct{ Cluster cluster.Status }
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		code := owner.do("GET", "/api/v1/overview", nil, &overview)
+		if code == 200 && overview.Cluster.NodesOnline == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("two-node overview: %d %+v", code, overview)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if overview.Cluster.NodesTotal != 2 || !strings.Contains(overview.Cluster.Leader, leader.srv.URL) || !strings.Contains(overview.Node.Label, leader.srv.URL) {
+		t.Fatalf("incorrect overview: %+v", overview)
+	}
+	owner.do("GET", "/api/v1/cluster", nil, &status)
+	if len(status.Cluster.Members) != 2 || status.Cluster.Members[0].Label == status.Cluster.Members[1].Label {
+		t.Fatalf("same hostname conflated nodes: %+v", status.Cluster.Members)
+	}
+	for _, member := range status.Cluster.Members {
+		if !strings.Contains(member.Label, member.Address) {
+			t.Fatalf("address missing: %+v", member)
+		}
+	}
+	if code := owner.do("POST", "/api/v1/auth/password", map[string]string{"current_password": "owner-password-1", "new_password": "cluster-new-password-1"}, &body); code != 200 {
+		t.Fatalf("leader password change: %d %+v", code, body)
+	}
+	// A local login writes through Raft, which also acts as a barrier for the password change.
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		u, err := worker.store.GetUserByUsername(context.Background(), "owner")
+		if err == nil {
+			if valid, _ := security.VerifyPassword("cluster-new-password-1", u.PasswordHash); valid {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("new leader password did not replicate")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	fresh := worker.client()
+	if code := fresh.do("POST", "/api/v1/auth/login", map[string]string{"username": "owner", "password": "cluster-new-password-1"}, &body); code != 200 {
+		t.Fatalf("updated cluster credentials: %d %+v", code, body)
+	}
+	fresh.loadCSRF()
 }

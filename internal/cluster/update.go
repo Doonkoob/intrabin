@@ -15,7 +15,7 @@ func (m *Manager) UpdateMembers(ctx context.Context) (string, bool, []update.Upd
 	st := m.Status(ctx)
 	peers := []update.UpdatePeer{}
 	for _, n := range st.Members {
-		peers = append(peers, update.UpdatePeer{ID: n.ID, Name: n.Name, Voter: n.Suffrage == "voter", Reachable: n.Reachable})
+		peers = append(peers, update.UpdatePeer{ID: n.ID, Name: n.Label, Voter: n.Suffrage == "voter", Reachable: n.Reachable})
 	}
 	return st.NodeID, st.Enabled && st.RaftState == raft.Leader.String() && st.Gate != nil && st.Gate.Open, peers
 }

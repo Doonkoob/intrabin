@@ -106,7 +106,7 @@ export function Layout() {
       <div className="mt-auto pt-4">
         <div className="sidebar-account flex items-center gap-3 rounded-xl p-3">
           <span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#2d4b59] text-sm font-semibold text-[#b7e9de]">{(me?.user.display_name || me?.user.username || 'I').slice(0, 1).toUpperCase()}</span>
-          <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium text-white">{me?.user.display_name || me?.user.username}</div><div className="mt-0.5 truncate text-[11px] text-[#a9bdca]">{t(`role.${me?.user.role}` as Key)} · {me?.node.node_name}</div></div>
+          <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium text-white">{me?.user.display_name || me?.user.username}</div><div className="mt-0.5 truncate text-[11px] text-[#a9bdca]">{t(`role.${me?.user.role}` as Key)} · {me?.node.node_label || me?.node.node_name}</div></div>
         </div>
         <button type="button" onClick={logout} className="sidebar-link mt-2 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-xs">
           <LogOut className="size-4 rtl:-scale-x-100" />{t('user.logout')}

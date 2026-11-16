@@ -23,9 +23,14 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) nodeInfo() map[string]any {
+	label := node.Label(s.node.Identity.ID, s.node.Identity.Name, s.cfg.PublicURL)
+	if s.cluster != nil && s.cluster.Enabled() {
+		label = s.cluster.LocalLabel()
+	}
 	return map[string]any{
 		"node_id":    s.node.Identity.ID,
 		"node_name":  s.node.Identity.Name,
+		"node_label": label,
 		"role":       s.node.Role(),
 		"can_manage": s.node.CanManage(),
 		"version":    node.Version,
@@ -511,6 +516,25 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, r, err)
 		return
 	}
+	clusterInfo := map[string]any{"mode": "standalone", "nodes_total": 1, "nodes_online": 1, "leader": node.Label(s.node.Identity.ID, s.node.Identity.Name, s.cfg.PublicURL), "quorum": "not_applicable"}
+	if s.cluster != nil && s.cluster.Enabled() {
+		st := s.cluster.Status(ctx)
+		online := 0
+		leader := st.LeaderAPIURL
+		for _, member := range st.Members {
+			if member.Reachable {
+				online++
+			}
+			if member.Leader {
+				leader = member.Label
+			}
+		}
+		quorum := "unavailable"
+		if st.Gate != nil && st.Gate.Open {
+			quorum = "healthy"
+		}
+		clusterInfo = map[string]any{"mode": "cluster", "nodes_total": len(st.Members), "nodes_online": online, "leader": leader, "leader_id": st.LeaderID, "quorum": quorum, "gate": st.Gate}
+	}
 	writeJSON(w, 200, map[string]any{
 		"monitors":       map[string]any{"total": len(ms), "by_status": counts, "list": list},
 		"incidents":      map[string]any{"open": len(open), "open_list": open, "recent": recent},
@@ -518,6 +542,6 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		"latency_24h":    latency,
 		"health_30d":     health,
 		"node":           s.nodeInfo(),
-		"cluster":        map[string]any{"mode": "standalone", "nodes_total": 1, "nodes_online": 1, "leader": s.node.Identity.Name, "quorum": "not_applicable"},
+		"cluster":        clusterInfo,
 	})
 }
