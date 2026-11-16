@@ -33,6 +33,7 @@ import (
 	"github.com/intrabin/intrabin/internal/runner"
 	"github.com/intrabin/intrabin/internal/security"
 	"github.com/intrabin/intrabin/internal/storage"
+	"github.com/intrabin/intrabin/internal/update"
 	"github.com/intrabin/intrabin/internal/web"
 )
 
@@ -121,7 +122,11 @@ func serve() error {
 	auditLog := audit.New(cp, log)
 	incMgr := incidents.NewManager(controlplane.IncidentStore{Store: store, CP: cp}, log)
 	prober := monitoring.NewProber(node.Version)
-	clusterMgr := cluster.New(cluster.Options{DataDir: cfg.DataDir, Listen: cfg.ClusterListen, Advertise: cfg.ClusterAdvertise, APIURL: cfg.PublicURL,
+	advertise := cfg.ClusterAdvertise
+	if advertise == "" {
+		advertise = cfg.PublicURL // peers reach this node through its public web address (tunnel)
+	}
+	clusterMgr := cluster.New(cluster.Options{DataDir: cfg.DataDir, Listen: cfg.ClusterListen, Advertise: advertise, APIURL: cfg.PublicURL,
 		Location: cfg.NodeLocation, Store: store, CP: cp, DataBox: box, MasterBox: masterBox, Node: n, Log: log})
 	engine := &monitoring.Engine{Store: store, CP: cp, Prober: prober, Incidents: incMgr, Log: log, NodeID: n.Identity.ID, Decrypt: api.DecryptMonitor(box),
 		IsEvaluator: n.CanManage, Workers: cfg.ProbeWorkers, Retention: retention(store), ResultSink: clusterMgr.ResultSink(), Location: clusterMgr.LocationOf}
@@ -165,8 +170,9 @@ func serve() error {
 		}
 		log.Warn("initial setup required: open the web UI and enter this one-time setup token", "setup_token", setupToken)
 	}
+	updater := &update.Service{Enabled: cfg.UpdateCheck, Repo: cfg.UpdateRepo, Current: node.Version, Dir: cfg.UpdateDir, Store: store, Log: log.With("component", "update")}
 	srv := api.New(api.Deps{Config: cfg, Store: store, CP: cp, Cluster: clusterMgr, Node: n, Engine: engine, Prober: prober, Incidents: incMgr, Audit: auditLog,
-		SecretBox: box, Log: log, Web: web.Handler(), SetupToken: setupToken, Automation: auto, DNS: dnsSvc, DR: drMgr})
+		SecretBox: box, Log: log, Web: web.Handler(), SetupToken: setupToken, Automation: auto, DNS: dnsSvc, DR: drMgr, Update: updater})
 
 	go engine.Run(ctx)
 	go auto.Run(ctx)
@@ -174,6 +180,7 @@ func serve() error {
 	go housekeeping(ctx, store, cp, n, log)
 	go dnsReconciler(ctx, dnsSvc, n)
 	go autoCluster(ctx, cfg, clusterMgr, log)
+	go updater.Run(ctx)
 
 	httpSrv := &http.Server{Addr: cfg.Listen, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10}

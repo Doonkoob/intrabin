@@ -80,16 +80,20 @@ type Manager struct {
 	caPEM     []byte
 	clusterID string
 	dataKey   []byte
-	advertise string
 	fsm       *fsm
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 
-	mesh      *mesh
-	shipKick  chan struct{}
-	peerHTTP  *http.Client
-	joinLimit *rateWindow
-	roleHooks []func(node.Role)
+	advMu     sync.Mutex
+	advertise string // this node's cluster address (host:port or public URL)
+
+	mesh        *mesh
+	shipKick    chan struct{}
+	peerMu      sync.Mutex
+	peers       map[string]*http.Client // peer API clients by cluster address
+	tunnelSlots chan struct{}
+	joinLimit   *rateWindow
+	roleHooks   []func(node.Role)
 
 	locMu sync.Mutex
 	locs  map[string]string
@@ -104,7 +108,20 @@ func New(opt Options) *Manager {
 	if opt.Log == nil {
 		opt.Log = slog.Default()
 	}
-	return &Manager{opt: opt, log: opt.Log.With("component", "cluster"), mesh: newMesh(), shipKick: make(chan struct{}, 1), joinLimit: newRateWindow(20, time.Minute)}
+	return &Manager{opt: opt, log: opt.Log.With("component", "cluster"), mesh: newMesh(), shipKick: make(chan struct{}, 1), joinLimit: newRateWindow(20, time.Minute),
+		peers: map[string]*http.Client{}, tunnelSlots: make(chan struct{}, maxTunnels)}
+}
+
+func (m *Manager) advertiseAddr() string {
+	m.advMu.Lock()
+	defer m.advMu.Unlock()
+	return m.advertise
+}
+
+func (m *Manager) setAdvertise(a string) {
+	m.advMu.Lock()
+	m.advertise = a
+	m.advMu.Unlock()
 }
 
 // OnRoleChange registers a callback for effective role changes.
@@ -136,7 +153,8 @@ func (m *Manager) Resume(ctx context.Context) error {
 		return fmt.Errorf("unseal cluster data key (wrong master key?): %w", err)
 	}
 	m.clusterID, _ = m.opt.Store.GetSetting(ctx, keyID)
-	m.advertise, _ = m.opt.Store.GetSetting(ctx, keyAdvertise)
+	adv, _ := m.opt.Store.GetSetting(ctx, keyAdvertise)
+	m.setAdvertise(adv)
 	if err := m.useDataKey(key); err != nil {
 		return err
 	}
@@ -238,8 +256,9 @@ func (m *Manager) start(bootstrap bool) error {
 	if err != nil {
 		return fmt.Errorf("cluster listen %s: %w", m.opt.Listen, err)
 	}
-	m.mux = newMux(ln, m.serverTLS(), strAddr(m.advertise), m.log)
-	stream := &streamLayer{chanListener: m.mux.raft, client: m.clientTLS}
+	adv := m.advertiseAddr()
+	m.mux = newMux(ln, m.serverTLS(), strAddr(adv), m.log)
+	stream := &streamLayer{chanListener: m.mux.raft, m: m}
 	m.trans = raft.NewNetworkTransportWithLogger(stream, 3, 10*time.Second, m.hclogger())
 
 	cfg := raft.DefaultConfig()
@@ -275,13 +294,12 @@ func (m *Manager) start(bootstrap bool) error {
 		return err
 	}
 	if bootstrap {
-		f := r.BootstrapCluster(raft.Configuration{Servers: []raft.Server{{Suffrage: raft.Voter, ID: cfg.LocalID, Address: raft.ServerAddress(m.advertise)}}})
+		f := r.BootstrapCluster(raft.Configuration{Servers: []raft.Server{{Suffrage: raft.Voter, ID: cfg.LocalID, Address: raft.ServerAddress(adv)}}})
 		if err := f.Error(); err != nil && !errors.Is(err, raft.ErrCantBootstrap) {
 			return err
 		}
 	}
 	m.r = r
-	m.peerHTTP = &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: m.clientTLS(alpnHTTP), MaxIdleConnsPerHost: 4, IdleConnTimeout: 60 * time.Second}}
 	m.httpSrv = &http.Server{Handler: m.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	go m.httpSrv.Serve(m.mux.http) //nolint:errcheck
 	m.opt.CP.SetApplier(m)
@@ -292,7 +310,7 @@ func (m *Manager) start(bootstrap bool) error {
 	go m.roleLoop(ctx)
 	go m.meshLoop(ctx)
 	go m.shipLoop(ctx)
-	m.log.Info("cluster started", "cluster_id", m.clusterID, "advertise", m.advertise, "listen", m.opt.Listen, "bootstrap", bootstrap)
+	m.log.Info("cluster started", "cluster_id", m.clusterID, "advertise", adv, "listen", m.opt.Listen, "bootstrap", bootstrap)
 	return nil
 }
 
@@ -308,8 +326,10 @@ func (m *Manager) Shutdown() {
 	m.trans.Close()
 	_ = m.httpSrv.Close()
 	m.mux.Close()
+	m.mux = nil
 	m.wg.Wait()
 	m.bolt.Close()
+	m.closePeerClients()
 	m.r = nil
 	m.enabled.Store(false)
 }

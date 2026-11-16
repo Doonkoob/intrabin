@@ -15,18 +15,35 @@ Non-voters (new members, or nodes kept as probe-only locations) replicate data a
 count toward quorum.
 
 ## Network
+Every node has a **cluster address**: how the other nodes reach it. It takes one of two forms:
+
+| Cluster address | Traffic goes through | Use when |
+|---|---|---|
+| The node's public URL, e.g. `https://intrabin.example.com` or `http://203.0.113.5:8080` | The normal web port (443, 80, 8080…), as a WebSocket tunnel to `/api/v1/cluster/tunnel` | The node is behind a reverse proxy or CDN, or you cannot open another port. **Default** when `INTRABIN_PUBLIC_URL` is set (the installer sets it). |
+| `host:port` of the cluster port, e.g. `10.0.0.11:7443` | A dedicated TCP port (`INTRABIN_CLUSTER_LISTEN`, default `:7443`) | Private networks between the nodes. |
+
+In both cases the nodes authenticate each other with mutual TLS 1.3 against the cluster CA, and that
+TLS session runs **end to end inside the tunnel**: a reverse proxy or CDN that terminates the outer
+HTTPS connection sees only encrypted bytes and cannot read or change cluster traffic. Raft is
+leader-initiated, so the leader must be able to reach every member and every member the leader; the
+forms can be mixed (a leader at `https://…` and workers at `http://<ip>:8080`).
+
+Proxies and CDNs must allow WebSocket on the tunnel path: Caddy (installer's domain mode), Nginx with
+`proxy_set_header Upgrade/Connection`, Cloudflare and ArvanCloud (enable WebSocket for the domain) all
+work. Idle tunnels are kept open with WebSocket pings every 25 s.
+
 | Port | Purpose |
 |---|---|
-| 8080/tcp | UI + API on every node (put a TLS reverse proxy in front for remote access). |
-| 7443/tcp | Cluster port: Raft and the peer API, mutual TLS with the cluster CA. Must be reachable between all nodes. Do not expose it publicly. |
+| 8080/tcp (or 443 via the proxy) | UI + API on every node; also the cluster tunnel for URL cluster addresses. |
+| 7443/tcp | Cluster port, only needed for `host:port` cluster addresses. Do not expose it publicly. |
 
 Environment variables:
 
 | Variable | Meaning |
 |---|---|
 | `INTRABIN_CLUSTER_LISTEN` | Bind address for the cluster port (default `:7443`). |
-| `INTRABIN_CLUSTER_ADVERTISE` | `host:port` other nodes use to reach this node's cluster port. |
-| `INTRABIN_PUBLIC_URL` | This node's UI URL; followers link users to the leader with it. |
+| `INTRABIN_CLUSTER_ADVERTISE` | Default cluster address of this node: its public URL or `host:port` of the cluster port. Defaults to `INTRABIN_PUBLIC_URL`. |
+| `INTRABIN_PUBLIC_URL` | This node's UI URL; followers link users to the leader with it, and it is the default cluster address. |
 | `INTRABIN_NODE_NAME`, `INTRABIN_NODE_LOCATION` | Display name and location label. Distinct locations count as independent confirmations (`min_locations`). |
 | `INTRABIN_JOIN_TOKEN`, `INTRABIN_JOIN_DATA_ACTION` | Optional automation: join on first start. `export` or `discard` is required if the node already has data. |
 | `INTRABIN_CLUSTER_INIT=true` | Optional automation: found a cluster on first start. |
@@ -34,8 +51,9 @@ Environment variables:
 ## Create a cluster
 1. Install the first node as usual and complete setup.
 2. **Cluster / Nodes → Create a cluster**, enter the node's cluster address (for example
-   `10.0.0.11:7443`). The node becomes the first voter and leader. Its current data becomes the
-   cluster's initial state, and monitor secrets are re-encrypted with a new cluster data key.
+   `https://intrabin.example.com`, or `10.0.0.11:7443`). The node becomes the first voter and leader.
+   Its current data becomes the cluster's initial state, and monitor secrets are re-encrypted with a
+   new cluster data key.
 
 ## Add a node
 1. On the leader: **Cluster / Nodes → New join token**. Tokens are single-use, expire (15 min–24 h)
@@ -51,6 +69,25 @@ Environment variables:
    wrapped data key, and starts replicating.
 4. On the leader, wait until the member shows **Reachable** and its applied index has caught up, then
    **Promote to voter**. Promotion is refused if the node is not reachable both ways or is behind.
+
+## Change the leader, or turn the leader into a worker
+Elections happen on their own when a leader fails; to move leadership on purpose:
+
+* On the leader's own row, **Hand over leadership**: pick the new leader and keep **Then make this node
+  a worker (non-voter)** checked to turn the current leader into a probe-only worker afterwards.
+* On another member's row, **Make leader** does the same for that member.
+
+A non-voter is promoted to a voter first (it must be reachable both ways and caught up). The current
+leader then hands over through Raft's leadership transfer and, if asked, requests its own demotion
+from the new leader. Your browser then shows this node as a follower with a link to the new leader.
+To make the old leader a voter again later, use **Promote to voter** on the new leader.
+
+## Change a node's cluster address
+**Change address** on a member's row (on the leader; the leader's own address too). This is how an
+existing cluster moves from the cluster port to public URLs: change each member to its
+`https://…` / `http://<ip>:8080` address. Before saving, the leader connects to the new address and
+checks that it presents that node's certificate, so a wrong address is refused instead of cutting the
+member off. The member picks up its new address automatically.
 
 ## Behaviour during failures
 * **Leader loss**: the remaining voters elect a new leader (typically within 1–3 s). Evaluation

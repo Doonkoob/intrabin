@@ -20,12 +20,16 @@ services:
     environment:
       INTRABIN_DATA_DIR: /var/lib/intrabin
       INTRABIN_LISTEN: ":8080"
+      INTRABIN_UPDATE_DIR: /var/lib/intrabin-update
     ports:
       # Bound to localhost by default. Put a TLS reverse proxy in front, or change the
       # bind address only together with INTRABIN_TLS_CERT/KEY and a firewall.
       - "${INTRABIN_BIND:-127.0.0.1}:${INTRABIN_PORT:-8080}:8080"
     volumes:
       - intrabin-data:/var/lib/intrabin
+      # Update requests from the web UI go to the host's update agent (set up by scripts/install.sh).
+      # Without the agent the UI shows the command to run instead.
+      - ./run/update:/var/lib/intrabin-update
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777

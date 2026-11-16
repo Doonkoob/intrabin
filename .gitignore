@@ -18,3 +18,4 @@ coverage.out
 /.install-info
 /compose.override.yaml
 /intrabin
+/run/

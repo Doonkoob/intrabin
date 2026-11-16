@@ -92,6 +92,7 @@ func (m *Manager) meshLoop(ctx context.Context) {
 			var wg sync.WaitGroup
 			for _, s := range m.servers() {
 				if string(s.ID) == self {
+					m.syncAdvertise(string(s.Address))
 					continue
 				}
 				wg.Add(1)
@@ -105,13 +106,25 @@ func (m *Manager) meshLoop(ctx context.Context) {
 	}
 }
 
+// syncAdvertise follows a change of this node's address made on the leader (SetAddress).
+func (m *Manager) syncAdvertise(addr string) {
+	if addr == "" || addr == m.advertiseAddr() {
+		return
+	}
+	m.setAdvertise(addr)
+	if err := m.opt.Store.SetSetting(context.Background(), keyAdvertise, addr); err != nil {
+		m.log.Error("persist cluster address", "err", err)
+	}
+	m.log.Info("cluster address of this node changed", "address", addr)
+}
+
 func (m *Manager) ping(ctx context.Context, s raft.Server) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	body, _ := json.Marshal(pingMsg{From: m.opt.Node.Identity.ID, peerView: m.selfView()})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+string(s.Address)+"/cluster/v1/ping", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://cluster-peer/cluster/v1/ping", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := m.peerHTTP.Do(req)
+	resp, err := m.peerClient(string(s.Address)).Do(req)
 	if err != nil {
 		return
 	}

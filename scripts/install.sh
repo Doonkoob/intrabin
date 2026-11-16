@@ -311,6 +311,7 @@ write_config() {
     set_env "$env" INTRABIN_NODE_NAME "$(hostname -s 2>/dev/null || echo intrabin-1)"
   fi
   set_env "$env" INTRABIN_SETUP_TOKEN "$(rand_hex 16)"
+  set_env "$env" INTRABIN_PUBLIC_URL ""
   if [[ "$MODE" == "domain" ]]; then
     set_env "$env" INTRABIN_DOMAIN "$DOMAIN"
     set_env "$env" ACME_EMAIL "$EMAIL"
@@ -341,6 +342,7 @@ write_config() {
   [[ -n "$NPM_REGISTRY" ]] && set_env "$env" NPM_REGISTRY "$NPM_REGISTRY"
   set_env "$env" COMPOSE_PROFILES "$(IFS=,; echo "${profiles[*]}")"
   set_release_images "$env"
+  set_public_url "$env"
   chmod 600 "$env"
   write_caddyfile
   umask 022
@@ -361,6 +363,67 @@ set_release_images() {
     set_env "$env" INTRABIN_RUNNER_IMAGE ""
     set_env "$env" INTRABIN_VERSION "$(git -C "$INSTALL_DIR" rev-parse --short HEAD)"
   fi
+}
+
+# set_public_url FILE: the address users and other cluster nodes reach this server at. It is also the
+# default cluster address: peers connect through it, so no extra port has to be opened.
+set_public_url() {
+  local env="$1" d bind port ip
+  [[ -n "$(get_env "$env" INTRABIN_PUBLIC_URL)" ]] && return 0
+  d=$(get_env "$env" INTRABIN_DOMAIN); bind=$(get_env "$env" INTRABIN_BIND); port=$(get_env "$env" INTRABIN_PORT)
+  if [[ -n "$d" ]]; then
+    set_env "$env" INTRABIN_PUBLIC_URL "https://$d"
+  elif [[ "$bind" == "0.0.0.0" ]]; then
+    ip=$(public_ip)
+    [[ -n "$ip" ]] && set_env "$env" INTRABIN_PUBLIC_URL "http://$ip:${port:-8080}"
+  fi
+  return 0
+}
+
+# The container writes update requests into run/update (mounted as INTRABIN_UPDATE_DIR). It must
+# exist and belong to the container user before Compose starts, or Docker creates it owned by root.
+prepare_update_dir() {
+  install -d -m 0755 "$INSTALL_DIR/run"
+  install -d -m 0700 "$INSTALL_DIR/run/update"
+  chown 65532:65532 "$INSTALL_DIR/run/update"
+}
+
+# install_update_agent: a systemd path unit runs `intrabin apply-update` when the web UI requests an
+# update. It backs up, installs the requested release and restarts the containers; data is kept.
+install_update_agent() {
+  if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
+    warn "systemd is not available: updates from the web UI are disabled (use: intrabin update)"
+    return 0
+  fi
+  cat >/etc/systemd/system/intrabin-update.service <<EOF
+[Unit]
+Description=Install an Intrabin update requested from the web UI
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/intrabin apply-update
+TimeoutStartSec=3600
+EOF
+  cat >/etc/systemd/system/intrabin-update.path <<EOF
+[Unit]
+Description=Watch for Intrabin update requests from the web UI
+
+[Path]
+PathExists=$INSTALL_DIR/run/update/request
+Unit=intrabin-update.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  if ! systemctl enable --now intrabin-update.path >/dev/null 2>&1; then
+    warn "could not enable intrabin-update.path; updates from the web UI are disabled"
+    return 0
+  fi
+  /usr/local/bin/intrabin agent-info || true
+  ok "Updates from the web UI enabled (Settings → Updates)"
 }
 
 write_caddyfile() {
@@ -484,15 +547,18 @@ main() {
   if [[ "$existing" == "yes" && -z "$MODE" ]]; then
     info "Existing installation found: keeping its configuration and updating"
     set_release_images "$INSTALL_DIR/.env"
+    set_public_url "$INSTALL_DIR/.env"
     write_caddyfile
   else
     choose_mode
     write_config
     open_firewall
   fi
+  prepare_update_dir
   start_services
   create_owner
   install_cli
+  install_update_agent
   summary
 }
 

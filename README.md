@@ -26,7 +26,11 @@ multi-location monitoring with automatic leader failover.
 * **Clustering**: create a cluster from any node, add nodes with single-use join tokens, promote them
   to voters; Raft (hashicorp/raft) replicates the control plane, peers use mutual TLS, followers ship
   probe results to the leader, a mesh safety gate and NO_QUORUM mode prevent split-brain actions.
+  Cluster traffic can go through each node's public web address (also behind a reverse proxy or CDN),
+  so no extra port is needed; leadership can be handed over and a leader turned into a worker from the UI.
   See [docs/operations/cluster.md](docs/operations/cluster.md).
+* **Updates from the UI**: a daily check for new GitHub releases; owners and admins can install an update
+  with one confirmation (backup first, data kept). See [docs/operations/installation.md](docs/operations/installation.md#upgrade).
 * **Automation**: workflows triggered by incident status changes, conditions (latency, status code,
   24 h uptime, days to certificate expiry, status), schedules or by hand, with Bash/Python
   script steps in an isolated Action Runner container, HTTP/webhook steps with SSRF protection, durable

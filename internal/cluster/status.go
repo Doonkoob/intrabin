@@ -66,7 +66,7 @@ func (m *Manager) Status(ctx context.Context) *Status {
 	}
 	st.Enabled = true
 	st.ClusterID = m.clusterID
-	st.Advertise = m.advertise
+	st.Advertise = m.advertiseAddr()
 	stats := r.Stats()
 	st.RaftState = r.State().String()
 	st.Term = stats["term"]

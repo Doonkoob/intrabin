@@ -37,6 +37,7 @@ func (m *Manager) handler() http.Handler {
 	mux.HandleFunc("POST /cluster/v1/ping", m.peerOnly(m.handlePing))
 	mux.HandleFunc("POST /cluster/v1/apply", m.peerOnly(m.handleForwardApply))
 	mux.HandleFunc("POST /cluster/v1/results", m.peerOnly(m.handleResults))
+	mux.HandleFunc("POST /cluster/v1/demote-self", m.peerOnly(m.handleDemoteSelf))
 	return mux
 }
 
@@ -160,9 +161,9 @@ func (m *Manager) postPeer(ctx context.Context, addr, path string, in, out any) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+addr+path, bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://cluster-peer"+path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := m.peerHTTP.Do(req)
+	resp, err := m.peerClient(addr).Do(req)
 	if err != nil {
 		return err
 	}
@@ -176,6 +177,33 @@ func (m *Manager) postPeer(ctx context.Context, addr, path string, in, out any) 
 		return json.NewDecoder(http.MaxBytesReader(nil, resp.Body, 8<<20)).Decode(out)
 	}
 	return nil
+}
+
+// handleDemoteSelf lets a member that just handed over leadership become a non-voter. A node can
+// only ask for its own demotion (the peer ID comes from its client certificate).
+func (m *Manager) handleDemoteSelf(w http.ResponseWriter, r *http.Request, peer string) {
+	rn := m.raftNode()
+	if rn == nil || rn.State() != raft.Leader {
+		m.notLeader(w)
+		return
+	}
+	if !m.GateOK() {
+		writeJSON(w, http.StatusServiceUnavailable, rpcError{Code: "no_quorum", Message: "mesh safety gate is closed"})
+		return
+	}
+	s, ok := m.isMember(peer)
+	if !ok {
+		writeJSON(w, http.StatusForbidden, rpcError{Code: "not_member", Message: "node is not a cluster member"})
+		return
+	}
+	if s.Suffrage == raft.Voter {
+		if err := rn.DemoteVoter(s.ID, 0, 10*time.Second).Error(); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, rpcError{Code: "unavailable", Message: err.Error()})
+			return
+		}
+		m.log.Warn("member demoted to non-voter at its own request", "node_id", peer)
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // ---- result shipping ----

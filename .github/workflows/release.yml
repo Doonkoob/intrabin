@@ -5,7 +5,7 @@ on:
   push:
     tags: ["v*"]
 permissions:
-  contents: read
+  contents: write # the GitHub release that the in-app update check reads
   packages: write
 jobs:
   images:
@@ -34,3 +34,13 @@ jobs:
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 --push -f Dockerfile.runner \
             -t "${{ steps.names.outputs.runner }}:${GITHUB_REF_NAME}" -t "${{ steps.names.outputs.runner }}:latest" .
+      - name: GitHub release
+        # Created after the images are published, so the update notice never points at a release
+        # whose images are missing. Pre-release tags (v1.2.0-rc1) are never offered as updates.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 && exit 0
+          pre=""
+          case "${GITHUB_REF_NAME}" in *-*) pre="--prerelease" ;; esac
+          gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes --title "Intrabin ${GITHUB_REF_NAME}" $pre

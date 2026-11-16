@@ -30,6 +30,7 @@ import (
 	"github.com/intrabin/intrabin/internal/node"
 	"github.com/intrabin/intrabin/internal/security"
 	"github.com/intrabin/intrabin/internal/storage"
+	"github.com/intrabin/intrabin/internal/update"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -46,6 +47,7 @@ type Server struct {
 	automation *automation.Engine
 	dns        *dns.Service
 	dr         *dr.Manager
+	update     *update.Service
 	audit      *audit.Logger
 	box        *security.SecretBox
 	limiter    *auth.LoginLimiter
@@ -70,6 +72,7 @@ type Deps struct {
 	Automation *automation.Engine
 	DNS        *dns.Service
 	DR         *dr.Manager
+	Update     *update.Service
 	Audit      *audit.Logger
 	SecretBox  *security.SecretBox
 	Log        *slog.Logger
@@ -79,7 +82,7 @@ type Deps struct {
 }
 
 func New(d Deps) *Server {
-	s := &Server{cfg: d.Config, store: d.Store, cp: d.CP, cluster: d.Cluster, node: d.Node, engine: d.Engine, prober: d.Prober, incidents: d.Incidents, automation: d.Automation, dns: d.DNS, dr: d.DR,
+	s := &Server{cfg: d.Config, store: d.Store, cp: d.CP, cluster: d.Cluster, node: d.Node, engine: d.Engine, prober: d.Prober, incidents: d.Incidents, automation: d.Automation, dns: d.DNS, dr: d.DR, update: d.Update,
 		audit: d.Audit, box: d.SecretBox, limiter: auth.NewLoginLimiter(), log: d.Log, web: d.Web, setupToken: d.SetupToken, argon: security.DefaultArgon2}
 	if s.cp == nil {
 		s.cp = controlplane.New(d.Store)
@@ -162,6 +165,8 @@ func (s *Server) Handler() http.Handler {
 		{"POST /api/v1/cluster/nodes/{id}/promote", auth.PermClusterManage, true, s.handlePromoteNode},
 		{"POST /api/v1/cluster/nodes/{id}/demote", auth.PermClusterManage, true, s.handleDemoteNode},
 		{"DELETE /api/v1/cluster/nodes/{id}", auth.PermClusterManage, true, s.handleRemoveNode},
+		{"POST /api/v1/cluster/nodes/{id}/make-leader", auth.PermClusterManage, true, s.handleMakeLeader},
+		{"PUT /api/v1/cluster/nodes/{id}/address", auth.PermClusterManage, true, s.handleSetNodeAddress},
 
 		{"GET /api/v1/overview", auth.PermView, true, s.handleOverview},
 		{"GET /api/v1/overview/node-latency", auth.PermView, true, s.handleNodeLatency},
@@ -240,6 +245,10 @@ func (s *Server) Handler() http.Handler {
 		{"POST /api/v1/dr-plans/{id}/resolve", auth.PermDRManage, true, s.handleResolveDRPlan},
 
 		{"GET /api/v1/audit-logs", auth.PermAuditView, true, s.handleListAudit},
+		{"GET /api/v1/system/update", auth.PermSettingsManage, false, s.handleUpdateState},
+		{"POST /api/v1/system/update/check", auth.PermSettingsManage, false, s.handleUpdateCheck},
+		{"POST /api/v1/system/update/dismiss", auth.PermSettingsManage, false, s.handleUpdateDismiss},
+		{"POST /api/v1/system/update/apply", auth.PermSettingsManage, false, s.handleUpdateApply},
 		{"GET /api/v1/settings", auth.PermView, true, s.handleGetSettings},
 		{"PATCH /api/v1/settings", auth.PermSettingsManage, true, s.handleUpdateSettings},
 	}
@@ -250,7 +259,17 @@ func (s *Server) Handler() http.Handler {
 	if s.web != nil {
 		mux.Handle("/", s.web)
 	}
-	return s.middleware(mux)
+	inner := s.middleware(mux)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Cluster connections tunnelled through the public address: the Host allow-list and the
+		// session middleware do not apply, because peers authenticate inside the tunnel with the
+		// cluster's mutual TLS (or a join token), exactly as on the cluster port.
+		if r.URL.Path == cluster.TunnelPath && s.cluster != nil {
+			s.cluster.ServeTunnel(w, r, s.clientIP(r))
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
 }
 
 type statusRecorder struct {

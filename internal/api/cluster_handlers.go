@@ -235,3 +235,38 @@ func (s *Server) handleDemoteNode(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRemoveNode(w http.ResponseWriter, r *http.Request) {
 	s.memberAction("removed", func(m *cluster.Manager, r *http.Request, id string) error { return m.Remove(r.Context(), id) })(w, r)
 }
+
+type makeLeaderReq struct {
+	DemoteSelf bool `json:"demote_self"`
+}
+
+// handleMakeLeader hands leadership to another member and optionally turns this node into a worker.
+func (s *Server) handleMakeLeader(w http.ResponseWriter, r *http.Request) {
+	var req makeLeaderReq
+	if err := decode(r, &req); err != nil {
+		s.writeErr(w, r, err)
+		return
+	}
+	s.memberAction("made_leader", func(m *cluster.Manager, r *http.Request, id string) error {
+		return m.TransferLeadership(r.Context(), id, req.DemoteSelf)
+	})(w, r)
+}
+
+type nodeAddressReq struct {
+	Address string `json:"address"`
+}
+
+func (s *Server) handleSetNodeAddress(w http.ResponseWriter, r *http.Request) {
+	var req nodeAddressReq
+	if err := decode(r, &req); err != nil {
+		s.writeErr(w, r, err)
+		return
+	}
+	if strings.TrimSpace(req.Address) == "" {
+		s.writeErr(w, r, errValidation(map[string]string{"address": "Enter the node's https:// URL or host:port of its cluster port."}))
+		return
+	}
+	s.memberAction("address_changed", func(m *cluster.Manager, r *http.Request, id string) error {
+		return m.SetAddress(r.Context(), id, req.Address)
+	})(w, r)
+}

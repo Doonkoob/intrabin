@@ -9,6 +9,8 @@ SELF=$(readlink -f "${BASH_SOURCE[0]}")
 INSTALL_DIR="${INTRABIN_DIR:-$(cd "$(dirname "$SELF")/.." && pwd)}"
 ENV_FILE="$INSTALL_DIR/.env"
 INFO_FILE="$INSTALL_DIR/.install-info"
+# Shared with the container (INTRABIN_UPDATE_DIR): it writes update requests, we write status.
+UPDATE_DIR="$INSTALL_DIR/run/update"
 
 if [[ -t 1 ]]; then
   R=$'\e[31m' G=$'\e[32m' Y=$'\e[33m' B=$'\e[34m' C=$'\e[36m' W=$'\e[1m' D=$'\e[2m' N=$'\e[0m'
@@ -71,6 +73,85 @@ write_caddyfile() {
     printf '%s {\n\tencode zstd gzip\n\treverse_proxy intrabin:8080\n}\n' "${d:-localhost}"
   } >deploy/Caddyfile
   chmod 644 deploy/Caddyfile
+}
+
+valid_tag() { [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; }
+newer_than() { [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" == "$1" ]]; }
+json_str() { local s="$1"; s=${s//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\n'/ }; printf '%s' "$s"; }
+now_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# write_shared NAME: write stdin to $UPDATE_DIR/NAME. The directory is writable by the container, so
+# never follow a link it may have planted: write a fresh temp file and rename it over the name.
+write_shared() {
+  local tmp
+  tmp=$(mktemp "$UPDATE_DIR/.tmp.XXXXXX")
+  cat >"$tmp"
+  chmod 644 "$tmp"
+  mv -fT "$tmp" "$UPDATE_DIR/$1"
+}
+
+write_agent_info() {
+  [[ -d "$UPDATE_DIR" && ! -L "$UPDATE_DIR" ]] || return 0
+  local mode=source
+  [[ -n "$(get_env INTRABIN_IMAGE)" ]] && mode=release
+  printf '{"agent":1,"mode":"%s"}\n' "$mode" | write_shared agent.json
+}
+
+update_status() { # state target from started_at message [finished_at]
+  printf '{"state":"%s","target":"%s","from":"%s","started_at":"%s","finished_at":"%s","message":"%s"}\n' \
+    "$1" "$2" "$3" "$4" "${6:-}" "$(json_str "$5")" | write_shared status.json
+}
+
+wait_healthy() { # wait_healthy VERSION
+  local v
+  for _ in $(seq 1 90); do
+    v=$(curl -fsS --max-time 2 "$(local_url)/api/v1/health" 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' || true)
+    [[ "$v" == "$1" ]] && return 0
+    sleep 2
+  done
+  return 1
+}
+
+update_rollback() { # branch head message
+  warn "$3; restoring the previous version's files"
+  if [[ "$1" == "HEAD" ]]; then git checkout -q -f "$2" || true; else git checkout -q -f -B "$1" "$2" || true; fi
+  chmod +x scripts/*.sh 2>/dev/null || true
+  if [[ -f "$ENV_FILE.pre-update" ]]; then mv -f "$ENV_FILE.pre-update" "$ENV_FILE"; chmod 600 "$ENV_FILE"; fi
+  write_caddyfile
+  die "$3. Nothing was changed: the previous version keeps running."
+}
+
+# update_to_tag TAG [yes|no]: install release TAG keeping the installation mode (published images or
+# a build on this server), the configuration and all data volumes. A backup is taken first.
+update_to_tag() {
+  local tag="$1" backup="${2:-yes}" prev_head prev_branch img rimg
+  valid_tag "$tag" || die "invalid version: $tag (expected e.g. v1.2.0)"
+  echo "==> Fetching $tag from $(git remote get-url origin)"
+  git fetch --depth 1 -q origin "refs/tags/$tag" || die "release $tag was not found"
+  if [[ "$backup" == "yes" ]] && running; then echo "==> Backing up"; cmd_backup; fi
+  prev_head=$(git rev-parse HEAD)
+  prev_branch=$(git rev-parse --abbrev-ref HEAD)
+  cp -p "$ENV_FILE" "$ENV_FILE.pre-update"
+  git checkout -q -f -B release FETCH_HEAD
+  chmod +x scripts/*.sh
+  write_caddyfile
+  set_env INTRABIN_VERSION "$tag"
+  img=$(get_env INTRABIN_IMAGE)
+  if [[ -n "$img" ]]; then
+    set_env INTRABIN_IMAGE "${img%:*}:$tag"
+    rimg=$(get_env INTRABIN_RUNNER_IMAGE)
+    [[ -n "$rimg" ]] && set_env INTRABIN_RUNNER_IMAGE "${rimg%:*}:$tag"
+    echo "==> Pulling the $tag images"
+    dc pull || update_rollback "$prev_branch" "$prev_head" "could not pull the $tag images"
+  else
+    echo "==> Building $tag (this takes a few minutes)"
+    dc build || update_rollback "$prev_branch" "$prev_head" "the image build failed"
+  fi
+  echo "==> Restarting with $tag"
+  dc up -d --remove-orphans || die "could not start the containers (see: intrabin logs)"
+  wait_healthy "$tag" || die "Intrabin did not report version $tag within 3 minutes (see: intrabin logs)"
+  rm -f "$ENV_FILE.pre-update"
+  ok "updated to $tag"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -162,6 +243,7 @@ cmd_domain() {
     else
       set_env INTRABIN_BIND 127.0.0.1
     fi
+    if [[ "$(get_env INTRABIN_BIND)" == "0.0.0.0" ]]; then set_env INTRABIN_PUBLIC_URL "http://$(public_ip):8080"; else set_env INTRABIN_PUBLIC_URL ""; fi
     set_profile proxy off
     dc rm -sf caddy >/dev/null 2>&1 || true
     dc up -d --remove-orphans
@@ -183,6 +265,7 @@ cmd_domain() {
   set_env INTRABIN_COOKIE_SECURE true
   set_env INTRABIN_ALLOWED_HOSTS "$d,127.0.0.1,localhost"
   set_env INTRABIN_TRUSTED_PROXIES "172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
+  set_env INTRABIN_PUBLIC_URL "https://$d"
   set_profile proxy on
   write_caddyfile
   if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
@@ -281,9 +364,14 @@ cmd_restore() {
 
 cmd_update() {
   local branch before after
+  if [[ "${1:-}" == "--to" ]]; then
+    update_to_tag "${2:-}" "$([[ "${3:-}" == "--no-backup" ]] && echo no || echo yes)"
+    write_agent_info
+    return 0
+  fi
   if [[ -n "$(get_env INTRABIN_IMAGE)" ]]; then
     echo "This server runs the published release $(get_env INTRABIN_VERSION). To move to another release run:"
-    echo "  bash $INSTALL_DIR/scripts/install.sh --release vX.Y.Z"
+    echo "  intrabin update --to vX.Y.Z"
     return 0
   fi
   branch=$(git rev-parse --abbrev-ref HEAD)
@@ -300,6 +388,42 @@ cmd_update() {
   dc build
   dc up -d --remove-orphans
   ok "updated $before → $after"
+}
+
+# cmd_apply_update runs an update requested from the web UI (started by intrabin-update.path).
+cmd_apply_update() {
+  local req="$UPDATE_DIR/request" tag from started rc=0 log="$INSTALL_DIR/run/update.log"
+  [[ -d "$UPDATE_DIR" && ! -L "$UPDATE_DIR" ]] || die "$UPDATE_DIR is missing; re-run the installer"
+  exec 9>"$INSTALL_DIR/run/.update.lock"
+  flock -n 9 || { echo "another update is already running"; return 0; }
+  [[ -e "$req" || -L "$req" ]] || return 0
+  if [[ -L "$req" || ! -f "$req" ]]; then rm -f "$req"; die "ignored an invalid update request"; fi
+  tag=$(head -c 4096 "$req" | sed -n 's/^version=//p' | head -n1)
+  rm -f "$req"
+  from=$(get_env INTRABIN_VERSION)
+  started=$(now_utc)
+  if ! valid_tag "$tag"; then
+    update_status failed "" "$from" "$started" "The request did not name a valid version." "$started"
+    die "invalid version in the update request"
+  fi
+  if valid_tag "$from" && ! newer_than "$tag" "$from"; then
+    update_status failed "$tag" "$from" "$started" "Only a newer release can be installed from the web UI." "$started"
+    die "refusing to move from $from to $tag"
+  fi
+  update_status running "$tag" "$from" "$started" "Backing up, then installing $tag."
+  echo "Updating $from → $tag (requested from the web UI)"
+  # A background subshell keeps `set -e` active inside update_to_tag.
+  ( update_to_tag "$tag" ) >"$log" 2>&1 &
+  wait $! || rc=$?
+  tail -c 65536 "$log" | write_shared update.log
+  if [[ $rc -eq 0 ]]; then
+    update_status succeeded "$tag" "$from" "$started" "Updated to $tag." "$(now_utc)"
+  else
+    update_status failed "$tag" "$from" "$started" "see the log below; your data was not changed." "$(now_utc)"
+  fi
+  write_agent_info
+  cat "$log"
+  return $rc
 }
 
 cmd_info() {
@@ -325,6 +449,11 @@ cmd_uninstall() {
   fi
   if [[ "$wipe" == "yes" ]]; then dc --profile proxy --profile automation down -v --remove-orphans
   else dc --profile proxy --profile automation down --remove-orphans; fi
+  if [[ -f /etc/systemd/system/intrabin-update.path ]]; then
+    systemctl disable --now intrabin-update.path >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/intrabin-update.path /etc/systemd/system/intrabin-update.service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
   rm -f /usr/local/bin/intrabin
   ok "Intrabin removed$([[ "$wipe" == "yes" ]] && echo " together with its data" || echo "; data volumes kept (docker volume ls | grep intrabin)")"
   echo "   The source and configuration remain in $INSTALL_DIR; delete that directory to remove them too."
@@ -347,6 +476,7 @@ Usage: intrabin [command]
   backup                back up the database and configuration
   restore [file]        restore a backup (takes a safety backup first)
   update [--no-backup]  update to the latest version (backs up first)
+  update --to vX.Y.Z    install a published release (keeps data and configuration)
   info                  installation details
   uninstall             remove Intrabin
 EOF
@@ -421,7 +551,9 @@ case "${1:-}" in
   runner) cmd_runner "${2:-}" ;;
   backup) cmd_backup ;;
   restore) cmd_restore "${2:-}" ;;
-  update) cmd_update "${2:-}" ;;
+  update) cmd_update "${2:-}" "${3:-}" "${4:-}" ;;
+  apply-update) cmd_apply_update ;;
+  agent-info) write_agent_info ;;
   info) cmd_info ;;
   uninstall) cmd_uninstall ;;
   help|-h|--help) usage ;;

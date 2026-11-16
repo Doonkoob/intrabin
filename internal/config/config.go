@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/intrabin/intrabin/internal/update"
 )
 
 type Config struct {
@@ -47,6 +49,12 @@ type Config struct {
 	// DNS (Phase 4). Overrides of the provider API base URLs, for tests against a mock provider
 	// only: credentials are sent to these URLs.
 	DNSAPIBase map[string]string
+
+	// Updates: daily check for a newer GitHub release, and the directory shared with the host's
+	// update agent (installed by scripts/install.sh) for updates started from the UI.
+	UpdateCheck bool
+	UpdateRepo  string
+	UpdateDir   string
 }
 
 // secretEnv reads K, or the contents of the file named by K_FILE.
@@ -118,6 +126,19 @@ func Load() (*Config, error) {
 			}
 			c.DNSAPIBase[kind] = strings.TrimSuffix(v, "/")
 		}
+	}
+	c.UpdateRepo = env("INTRABIN_UPDATE_REPO", "Doonkoob/intrabin")
+	c.UpdateDir = os.Getenv("INTRABIN_UPDATE_DIR")
+	c.UpdateCheck = true
+	if v := os.Getenv("INTRABIN_UPDATE_CHECK"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("INTRABIN_UPDATE_CHECK: %w", err)
+		}
+		c.UpdateCheck = b
+	}
+	if !update.ValidRepo(c.UpdateRepo) {
+		return nil, fmt.Errorf("INTRABIN_UPDATE_REPO must look like owner/name")
 	}
 	switch c.JoinDataAction {
 	case "", "export", "discard":

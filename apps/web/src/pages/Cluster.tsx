@@ -1,10 +1,10 @@
-import { useState, type FormEvent } from 'react'
-import { AlertTriangle, Boxes, Check, Copy, ExternalLink, KeyRound, LogIn, Network, Server, ShieldCheck, X } from 'lucide-react'
-import { ApiError, del, post } from '../api'
+import { useEffect, useState, type FormEvent } from 'react'
+import { AlertTriangle, Boxes, Check, Copy, Crown, ExternalLink, KeyRound, LogIn, Network, Server, ShieldCheck, X } from 'lucide-react'
+import { ApiError, del, post, put } from '../api'
 import { usePrefs, useSession } from '../app'
 import { useApi } from '../hooks'
 import { fmtBytes, fmtDateTime, fmtDuration, fmtNumber, fmtRelative } from '../format'
-import { Button, Card, ConfirmDialog, Dialog, Empty, ErrorBanner, Field, Input, PageHeader, Select, Spinner, Table, Textarea, td, th } from '../components/ui'
+import { Button, Card, Checkbox, ConfirmDialog, Dialog, Empty, ErrorBanner, Field, Input, PageHeader, Select, Spinner, Table, Textarea, td, th } from '../components/ui'
 import type { ClusterMember, ClusterStatus, EnrollmentToken, NodeInfo } from '../types'
 import type { Key } from '../i18n'
 
@@ -42,10 +42,105 @@ function Reach({ ok }: { ok: boolean }) {
     : <span className="inline-flex items-center gap-1 text-down"><X className="size-3.5" aria-hidden />{t('cluster.unreachable')}</span>
 }
 
+/** Hands leadership to another member (chosen here when `target` is 'select'). */
+function LeaderDialog({ c, target, onClose, onDone }: { c: ClusterStatus; target: ClusterMember | 'select' | null; onClose: () => void; onDone: () => void }) {
+  const { t } = usePrefs()
+  const candidates = c.members.filter((m) => !m.self && m.reachable)
+  const [pick, setPick] = useState('')
+  const [demote, setDemote] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  useEffect(() => {
+    if (!target) return
+    setPick(target === 'select' ? (candidates[0]?.id ?? '') : target.id)
+    setDemote(true)
+    setErr(null)
+  }, [target]) // candidates are read once, when the dialog opens
+  const run = async () => {
+    setBusy(true)
+    setErr(null)
+    try {
+      await post(`/cluster/nodes/${pick}/make-leader`, { demote_self: demote })
+      onDone()
+    } catch (e) {
+      setErr((e as ApiError).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog open={!!target} onClose={onClose}
+      title={target && target !== 'select' ? t('cluster.leaderDialog.title', { name: target.name }) : t('cluster.leaderDialog.titleSelect')}
+      footer={<><Button onClick={onClose}>{t('common.cancel')}</Button><Button variant="primary" loading={busy} disabled={!pick} onClick={run} data-testid="make-leader-confirm">{t('cluster.makeLeader')}</Button></>}>
+      <div className="flex flex-col gap-4 text-sm">
+        {err && <ErrorBanner error={err} />}
+        <p>{t('cluster.leaderDialog.body')}</p>
+        {target === 'select' && (candidates.length > 0 ? (
+          <Field label={t('cluster.leaderDialog.target')} htmlFor="new-leader">
+            <Select id="new-leader" value={pick} onChange={(e) => setPick(e.target.value)}>
+              {candidates.map((m) => <option key={m.id} value={m.id}>{m.name}{m.suffrage === 'nonvoter' ? ` (${t('cluster.nonvoter')})` : ''}</option>)}
+            </Select>
+          </Field>
+        ) : <p className="text-down">{t('cluster.leaderDialog.noTargets')}</p>)}
+        <div>
+          <Checkbox label={t('cluster.leaderDialog.demoteSelf')} checked={demote} onChange={setDemote} />
+          <p className="mt-1 ps-6 text-xs text-muted">{t('cluster.leaderDialog.demoteSelfHelp')}</p>
+        </div>
+      </div>
+    </Dialog>
+  )
+}
+
+/** Changes the address other members use to reach a node. */
+function AddressDialog({ m, onClose, onDone }: { m: ClusterMember | null; onClose: () => void; onDone: () => void }) {
+  const { t } = usePrefs()
+  const [addr, setAddr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [fieldErr, setFieldErr] = useState<string | undefined>()
+  useEffect(() => {
+    if (!m) return
+    setAddr(m.address)
+    setErr(null)
+    setFieldErr(undefined)
+  }, [m])
+  const save = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!m) return
+    setBusy(true)
+    setErr(null)
+    setFieldErr(undefined)
+    try {
+      await put(`/cluster/nodes/${m.id}/address`, { address: addr.trim() })
+      onDone()
+    } catch (e2) {
+      const ae = e2 as ApiError
+      if (ae.fields.address) setFieldErr(ae.fields.address)
+      else setErr(ae.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog open={!!m} onClose={onClose} title={m ? t('cluster.addressDialog.title', { name: m.name }) : ''}
+      footer={<><Button onClick={onClose}>{t('common.cancel')}</Button><Button variant="primary" type="submit" form="addr-form" loading={busy}>{t('cluster.addressDialog.save')}</Button></>}>
+      <form id="addr-form" onSubmit={save} className="flex flex-col gap-4">
+        {err && <ErrorBanner error={err} />}
+        <Field label={t('cluster.advertise')} htmlFor="node-addr" help={t('cluster.addressDialog.help')} error={fieldErr}>
+          <Input id="node-addr" className="ltr font-mono" value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="https://intrabin.example.com" required invalid={!!fieldErr} />
+        </Field>
+      </form>
+    </Dialog>
+  )
+}
+
 /** Cluster summary + members (+ admin actions when `admin`). Used on leader and follower views. */
 function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; reload: () => void }) {
   const { t, loc } = usePrefs()
+  const { refresh } = useSession()
   const [pending, setPending] = useState<{ m: ClusterMember; action: 'promote' | 'demote' | 'remove' } | null>(null)
+  const [leaderFor, setLeaderFor] = useState<ClusterMember | 'select' | null>(null)
+  const [addrFor, setAddrFor] = useState<ClusterMember | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const leader = c.members.find((m) => m.leader)
@@ -124,14 +219,19 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
                 <td className={`${td} ltr text-start font-mono text-xs`}>{m.address}</td>
                 {admin && (
                   <td className={`${td} text-end`}>
-                    {!m.self && (
-                      <div className="flex justify-end gap-1">
-                        {m.suffrage === 'nonvoter'
-                          ? <Button size="sm" onClick={() => setPending({ m, action: 'promote' })}>{t('cluster.promote')}</Button>
-                          : <Button size="sm" variant="ghost" onClick={() => setPending({ m, action: 'demote' })}>{t('cluster.demote')}</Button>}
-                        <Button size="sm" variant="ghost" className="text-down" onClick={() => setPending({ m, action: 'remove' })}>{t('common.remove')}</Button>
-                      </div>
-                    )}
+                    <div className="flex flex-wrap justify-end gap-1">
+                      {m.self && m.leader && c.members.length > 1 && (
+                        <Button size="sm" onClick={() => setLeaderFor('select')} data-testid="step-down"><Crown className="size-3.5" />{t('cluster.stepDown')}</Button>
+                      )}
+                      {!m.self && !m.leader && m.reachable && (
+                        <Button size="sm" onClick={() => setLeaderFor(m)} data-testid={`make-leader-${m.name}`}><Crown className="size-3.5" />{t('cluster.makeLeader')}</Button>
+                      )}
+                      {!m.self && (m.suffrage === 'nonvoter'
+                        ? <Button size="sm" onClick={() => setPending({ m, action: 'promote' })}>{t('cluster.promote')}</Button>
+                        : <Button size="sm" variant="ghost" onClick={() => setPending({ m, action: 'demote' })}>{t('cluster.demote')}</Button>)}
+                      <Button size="sm" variant="ghost" onClick={() => setAddrFor(m)} data-testid={`address-${m.name}`}>{t('cluster.changeAddress')}</Button>
+                      {!m.self && <Button size="sm" variant="ghost" className="text-down" onClick={() => setPending({ m, action: 'remove' })}>{t('common.remove')}</Button>}
+                    </div>
                   </td>
                 )}
               </tr>
@@ -171,6 +271,10 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
         title={pending ? t(`cluster.confirm.${pending.action}.title` as Key, { name: pending.m.name }) : ''}
         message={pending ? t(`cluster.confirm.${pending.action}.body` as Key, { name: pending.m.name }) : ''}
         confirmLabel={pending ? t(`cluster.${pending.action}` as Key) : ''} />
+      {admin && <>
+        <LeaderDialog c={c} target={leaderFor} onClose={() => setLeaderFor(null)} onDone={() => { setLeaderFor(null); reload(); void refresh() }} />
+        <AddressDialog m={addrFor} onClose={() => setAddrFor(null)} onDone={() => { setAddrFor(null); reload() }} />
+      </>}
     </>
   )
 }
@@ -324,7 +428,7 @@ function StandaloneActions({ c, reload }: { c: ClusterStatus; reload: () => void
           <p className="mb-4 text-sm text-muted">{t('cluster.createHelp')}</p>
           <form onSubmit={(e) => { e.preventDefault(); setConfirmInit(true) }} className="flex flex-col gap-4">
             <Field label={t('cluster.advertise')} htmlFor="adv" help={t('cluster.advertiseHelp')}>
-              <Input id="adv" className="ltr font-mono" value={adv} onChange={(e) => setAdv(e.target.value)} placeholder="10.0.0.11:7443" required />
+              <Input id="adv" className="ltr font-mono" value={adv} onChange={(e) => setAdv(e.target.value)} placeholder="https://intrabin.example.com" required />
             </Field>
             <Button type="submit" variant="primary" className="self-start" loading={busy === 'init'}>{t('cluster.createSubmit')}</Button>
           </form>
@@ -337,7 +441,7 @@ function StandaloneActions({ c, reload }: { c: ClusterStatus; reload: () => void
                 <Textarea id="jt" className="ltr h-24 font-mono text-xs" value={join.token} onChange={(e) => setJoin({ ...join, token: e.target.value })} required />
               </Field>
               <Field label={t('cluster.advertise')} htmlFor="jadv" help={t('cluster.advertiseHelp')}>
-                <Input id="jadv" className="ltr font-mono" value={join.advertise} onChange={(e) => setJoin({ ...join, advertise: e.target.value })} placeholder="10.0.0.12:7443" required />
+                <Input id="jadv" className="ltr font-mono" value={join.advertise} onChange={(e) => setJoin({ ...join, advertise: e.target.value })} placeholder="http://203.0.113.12:8080" required />
               </Field>
               <fieldset className="flex flex-col gap-2">
                 <legend className="mb-1 text-sm font-medium">{t('cluster.localData')}</legend>

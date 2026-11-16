@@ -42,7 +42,7 @@ custom Compose settings in `/opt/intrabin/compose.override.yaml`, which is never
 `start|stop|restart`, `logs [intrabin|caddy|runner]`, `password [user]`, `rename [user] [new]`,
 `users`, `domain`, `runner on|off`, `backup` (database + `.env` + key file into
 `/opt/intrabin/backups/*.tar.gz`, mode 600), `restore [file]`, `update` (backs up, pulls, rebuilds, restarts),
-`info`, `uninstall` (data volumes are deleted only after typing `DELETE`). Password and username
+`update --to vX.Y.Z` (installs a published release, see [Upgrade](#upgrade)), `info`, `uninstall` (data volumes are deleted only after typing `DELETE`). Password and username
 changes run the offline commands below inside the container and are refused on cluster members.
 
 ### Manual
@@ -102,6 +102,35 @@ UID 65532. Without the matching master key (`INTRABIN_MASTER_KEY` or `master.key
 credentials (monitor secrets, DNS tokens) cannot be decrypted.
 
 ## Upgrade
+### From the web UI (installer setups)
+Every node checks GitHub once a day for a newer release (`INTRABIN_UPDATE_REPO`, default
+`Doonkoob/intrabin`; turn it off with `INTRABIN_UPDATE_CHECK=false`). Owners and admins then see a
+notice at the top of the page; closing it hides it for 30 days. **Settings → Updates** shows the
+installed and latest version and has **Check now**.
+
+**Update** asks for confirmation, then hands the update to the server's update agent: the container
+writes a request into `/opt/intrabin/run/update` (mounted as `INTRABIN_UPDATE_DIR`), and the systemd
+unit `intrabin-update.path` runs `intrabin apply-update` on the host, which
+
+1. backs up the database and configuration (`/opt/intrabin/backups`),
+2. checks out the release tag and pulls its images (release installs) or builds them (source installs),
+3. recreates the containers and waits until the new version answers.
+
+Data volumes and `.env` are kept; schema migrations run when the new version starts. If the pull or
+build fails, the previous files are restored and the old containers keep running. Only a release
+newer than the installed one can be requested from the UI. Progress and the log appear in the dialog
+(and in `/opt/intrabin/run/update.log`). The container never gets access to Docker: the request file
+only names a version, which the agent validates.
+
+The agent is installed by `scripts/install.sh` (re-run it on existing installations). Without it,
+the update dialog shows the command to run instead. In a cluster, update each node from its own
+address, workers first.
+
+### From the command line
+```bash
+intrabin update --to v1.2.0     # installer setups: backup, fetch, pull or build, restart
+```
+Manual Compose installs:
 ```bash
 docker compose exec intrabin intrabin backup -out /var/lib/intrabin/pre-upgrade.db
 git pull && docker compose up -d --build

@@ -3,6 +3,7 @@ import { ApiError, patch, post } from '../api'
 import { usePrefs, useSession, type Theme } from '../app'
 import { useApi } from '../hooks'
 import { Button, Card, ErrorBanner, Field, Input, PageHeader, Segmented, Select, Spinner } from '../components/ui'
+import { UpdatesCard } from '../components/Update'
 import type { Settings, StorageInfo } from '../types'
 import { fmtBytes, fmtNumber } from '../format'
 import type { Key } from '../i18n'
@@ -108,6 +109,7 @@ export function SettingsPage() {
           </Card>
         )}
         <StorageCard key={saves} />
+        {can('settings.manage') && <UpdatesCard />}
         <Card title={t('settings.about')}>
           <dl className="grid grid-cols-2 gap-y-2 text-sm">
             <dt className="text-muted">{t('cluster.version')}</dt><dd className="ltr text-start">{me?.node.version}</dd>

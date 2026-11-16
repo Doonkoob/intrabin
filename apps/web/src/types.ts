@@ -496,3 +496,36 @@ export interface DRPlan {
 export interface DRCheck { id: string; ok: boolean; blocking: boolean; overridable: boolean; detail: string }
 
 export interface DRResult { plan: DRPlan; checks: DRCheck[]; dns_plan?: DNSPlan; steps: string[]; run?: WorkflowRun }
+
+export interface UpdateRelease {
+  version: string
+  name: string
+  url: string
+  published_at?: string
+  notes?: string
+}
+
+export interface UpdateRunStatus {
+  state: 'running' | 'succeeded' | 'failed'
+  target: string
+  from: string
+  started_at: string
+  finished_at?: string
+  message: string
+}
+
+export interface UpdateState {
+  enabled: boolean
+  current: string
+  latest?: UpdateRelease
+  available: boolean
+  checked_at?: string
+  check_error?: string
+  dismissed_until?: string
+  show_banner: boolean
+  agent: { available: boolean; mode?: 'release' | 'source' }
+  pending: boolean
+  status?: UpdateRunStatus
+  log?: string
+  repo: string
+}

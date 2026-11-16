@@ -4,6 +4,7 @@ import { Activity, AlertOctagon, Boxes, CalendarClock, FolderTree, Globe, Layout
 import { usePrefs, useSession, type Theme } from '../app'
 import { get, post } from '../api'
 import type { Key } from '../i18n'
+import { UpdateBanner } from './Update'
 
 interface NavItem { to: string; label: Key; icon: ReactNode; perm?: string }
 
@@ -124,6 +125,7 @@ export function Layout() {
         {role === 'NO_QUORUM' && (
           <div role="alert" className="border-b border-down/30 bg-down/10 px-4 py-2 text-sm text-down" data-testid="no-quorum-banner">{t('banner.noQuorum')}</div>
         )}
+        <UpdateBanner />
         <main id="main" className="mx-auto max-w-7xl p-4 sm:p-6">
           <Outlet />
         </main>

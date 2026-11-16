@@ -28,6 +28,7 @@ import (
 	"github.com/intrabin/intrabin/internal/node"
 	"github.com/intrabin/intrabin/internal/security"
 	"github.com/intrabin/intrabin/internal/storage"
+	"github.com/intrabin/intrabin/internal/update"
 )
 
 const setupTok = "setup-token-for-tests-123"
@@ -38,6 +39,8 @@ type env struct {
 	store *storage.Store
 	node  *node.Node
 	dns   *dnsmock.Server
+	// updateDir is the directory shared with the (simulated) host update agent.
+	updateDir string
 }
 
 func newEnv(t *testing.T) *env {
@@ -70,10 +73,20 @@ func newEnv(t *testing.T) *env {
 	go auto.Run(t.Context())
 	drMgr := &dr.Manager{Store: st, CP: cp, Engine: auto, DNS: dnsSvc, Fence: cm.Fence, Active: n.CanManage, Log: log, Interval: 100 * time.Millisecond}
 	go drMgr.Run(t.Context())
-	s := New(Deps{Config: cfg, Store: st, CP: cp, Cluster: cm, Node: n, Engine: eng, Prober: prober, Incidents: inc, Audit: audit.New(cp, log), SecretBox: box, Log: log, SetupToken: setupTok, Argon2: &fast, Automation: auto, DNS: dnsSvc, DR: drMgr})
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/intrabin/releases/latest" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, `{"tag_name":"v1.1.0","name":"v1.1.0","html_url":"https://github.com/acme/intrabin/releases/tag/v1.1.0","body":"Fixes","published_at":"2026-11-10T00:00:00Z"}`)
+	}))
+	t.Cleanup(gh.Close)
+	updateDir := filepath.Join(dir, "update")
+	upd := &update.Service{Enabled: true, Repo: "acme/intrabin", Current: "v1.0.0", Dir: updateDir, Store: st, Log: log, APIBase: gh.URL}
+	s := New(Deps{Config: cfg, Store: st, CP: cp, Cluster: cm, Node: n, Engine: eng, Prober: prober, Incidents: inc, Audit: audit.New(cp, log), SecretBox: box, Log: log, SetupToken: setupTok, Argon2: &fast, Automation: auto, DNS: dnsSvc, DR: drMgr, Update: upd})
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv, store: st, node: n, dns: mock}
+	return &env{t: t, srv: srv, store: st, node: n, dns: mock, updateDir: updateDir}
 }
 
 type client struct {
