@@ -215,3 +215,18 @@ func TestRollingUpdateCompletesOneNodeAtATime(t *testing.T) {
 		t.Fatal("completed plan dispatched again")
 	}
 }
+
+func TestExistingRolloutLabelsRefreshByID(t *testing.T) {
+	ctx := context.Background()
+	s := newSvc(t, "", "v0.2.6", t.TempDir())
+	f := &fakeCluster{peers: []UpdatePeer{{ID: "a", Name: "https://leader.example · a"}, {ID: "b", Name: "203.0.113.2:7443 · b"}}}
+	c := &Rollout{Cluster: f, Store: s.Store, Write: s.Store.SetSetting}
+	p := &RolloutPlan{Version: "v0.2.6", State: "running", Nodes: []RolloutNode{{ID: "a", Name: "same-host", State: "succeeded", Version: "v0.2.6"}, {ID: "b", Name: "same-host", State: "queued"}}}
+	if err := c.save(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got := c.State(ctx)
+	if got.Nodes[0].Name != f.peers[0].Name || got.Nodes[1].Name != f.peers[1].Name || got.Nodes[0].State != "succeeded" || got.Nodes[1].State != "queued" {
+		t.Fatalf("legacy plan labels/progress: %+v", got)
+	}
+}

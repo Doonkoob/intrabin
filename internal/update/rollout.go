@@ -68,6 +68,20 @@ func (c *Rollout) State(ctx context.Context) *RolloutPlan {
 	if json.Unmarshal([]byte(b), &p) != nil {
 		return nil
 	}
+	// Plans created by older versions may contain duplicate hostnames. Refresh display labels
+	// by persistent ID without changing the membership or the update's recorded progress.
+	if c.Cluster != nil {
+		_, _, peers := c.Cluster.UpdateMembers(ctx)
+		labels := map[string]string{}
+		for _, peer := range peers {
+			labels[peer.ID] = peer.Name
+		}
+		for i := range p.Nodes {
+			if label := labels[p.Nodes[i].ID]; label != "" {
+				p.Nodes[i].Name = label
+			}
+		}
+	}
 	return &p
 }
 func (c *Rollout) save(ctx context.Context, p *RolloutPlan) error {
