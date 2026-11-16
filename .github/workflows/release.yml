@@ -48,4 +48,25 @@ jobs:
           gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 && exit 0
           pre=""
           case "${GITHUB_REF_NAME}" in *-*) pre="--prerelease" ;; esac
-          gh release create "${GITHUB_REF_NAME}" --verify-tag --notes-file "docs/releases/${GITHUB_REF_NAME}.md" --title "Intrabin ${GITHUB_REF_NAME}" $pre
+          gh release create "${GITHUB_REF_NAME}" --draft --verify-tag --notes-file "docs/releases/${GITHUB_REF_NAME}.md" --title "Intrabin ${GITHUB_REF_NAME}" $pre
+      - name: Publish downloadable images for restricted registries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_IMAGE: ${{ steps.names.outputs.app }}
+          RUNNER_IMAGE: ${{ steps.names.outputs.runner }}
+        run: |
+          for arch in amd64 arm64; do
+            for package in intrabin intrabin-runner; do
+              image="$APP_IMAGE"
+              if [ "$package" = intrabin-runner ]; then image="$RUNNER_IMAGE"; fi
+              docker pull --platform "linux/$arch" "$image:$GITHUB_REF_NAME"
+              archive="$package-linux-$arch.tar.gz"
+              docker save "$image:$GITHUB_REF_NAME" | gzip -1 > "$archive"
+              gh release upload "$GITHUB_REF_NAME" "$archive" --clobber
+              rm "$archive"
+            done
+          done
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false

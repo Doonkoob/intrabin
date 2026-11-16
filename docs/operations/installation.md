@@ -102,6 +102,25 @@ UID 65532. Without the matching master key (`INTRABIN_MASTER_KEY` or `master.key
 credentials (monitor secrets, DNS tokens) cannot be decrypted.
 
 ## Upgrade
+### Restricted registries or an outdated updater
+
+A Docker Hub `403 Forbidden` while resolving Node, Go or Python prevents source builds. Existing
+installations can switch to prebuilt images with `intrabin update --to v0.2.4 --prebuilt`.
+The updater first tries GHCR, then the matching public GitHub release image archive. Images are
+prepared one service at a time; cached versioned images are reused.
+
+If the installed CLI predates this option (or still builds both services together), run once:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Doonkoob/intrabin/v0.2.4/scripts/update.sh -o /tmp/intrabin-update.sh &&
+sudo bash /tmp/intrabin-update.sh v0.2.4 /opt/intrabin
+```
+
+This loads the tagged updater before changing installed files, takes the normal backup, and keeps
+prebuilt mode for subsequent panel updates. Run it on each outdated cluster host. An uncached
+proxy image still needs its configured registry; set `CADDY_IMAGE` to an accessible equivalent
+when necessary. Other installation settings and named data volumes are preserved.
+
 ### From the web UI (installer setups)
 Every node checks GitHub once a day for a newer release (`INTRABIN_UPDATE_REPO`, default
 `Doonkoob/intrabin`; turn it off with `INTRABIN_UPDATE_CHECK=false`). Owners and admins then see a

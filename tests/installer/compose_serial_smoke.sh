@@ -14,11 +14,11 @@ printf 'serial-smoke\n' >"$TASK_DIR/token"
 cat >"$COMPOSE_FILE" <<EOF_CONFIG
 services:
   intrabin:
-    image: ${COMPOSE_PROJECT_NAME}-app
+    image: ${COMPOSE_PROJECT_NAME}-app:vtest
     build: .
   runner:
     profiles: [automation]
-    image: ${COMPOSE_PROJECT_NAME}-runner
+    image: ${COMPOSE_PROJECT_NAME}-runner:vtest
     build: .
   caddy:
     profiles: [proxy]
@@ -27,6 +27,9 @@ services:
     depends_on: [intrabin]
 EOF_CONFIG
 compose_serial_images build
+# Versioned local images have no registry counterpart: this succeeds only if cached pulls
+# really avoid the registry, as required when Docker Hub is blocked on an existing install.
+compose_serial_images pull
 compose_serial_up
 count=$(dc ps -q --status running | wc -l | tr -d ' ')
 [[ "$count" == 3 ]] || { echo "Expected 3 running containers, got $count" >&2; exit 1; }

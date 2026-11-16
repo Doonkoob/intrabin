@@ -26,8 +26,36 @@ die() { err "$*"; exit 1; }
 [[ -f "$ENV_FILE" && -f "$INSTALL_DIR/compose.yaml" ]] || die "no Intrabin installation found in $INSTALL_DIR (set INTRABIN_DIR)"
 cd "$INSTALL_DIR"
 
-source "$INSTALL_DIR/scripts/compose-serial.sh"
+source "$(dirname "$SELF")/compose-serial.sh"
 get_env() { grep -E "^${1}=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true; }
+compose_release_fallback() {
+  local service="$1" image package tag repo arch tmp
+  case "$service" in
+    intrabin) image=$(get_env INTRABIN_IMAGE); package=intrabin ;;
+    runner) image=$(get_env INTRABIN_RUNNER_IMAGE); package=intrabin-runner ;;
+    *) return 1 ;;
+  esac
+  tag=$(get_env INTRABIN_VERSION)
+  valid_tag "$tag" || return 1
+  repo=$(git remote get-url origin)
+  case "$repo" in
+    https://github.com/*) repo=${repo#https://github.com/} ;;
+    git@github.com:*) repo=${repo#git@github.com:} ;;
+    *) return 1 ;;
+  esac
+  repo=${repo%.git}
+  [[ "$repo" =~ ^[a-zA-Z0-9-]+/[a-zA-Z0-9_.-]+$ ]] || return 1
+  [[ "$image" == "ghcr.io/$(printf '%s' "${repo%%/*}" | tr '[:upper:]' '[:lower:]')/$package:$tag" ]] || return 1
+  arch=$(docker info --format '{{.Architecture}}') || return
+  case "$arch" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) return 1 ;; esac
+  tmp=$(mktemp -d) || return
+  echo "==> Registry unavailable; downloading $package from the GitHub release"
+  if curl -fL --retry 2 "https://github.com/$repo/releases/download/$tag/$package-linux-$arch.tar.gz" -o "$tmp/image.tar.gz" &&
+      gzip -dc "$tmp/image.tar.gz" | docker image load && docker image inspect "$image" >/dev/null; then
+    rm -rf "$tmp"; return 0
+  fi
+  rm -rf "$tmp"; return 1
+}
 set_env() {
   local k="$1" v="$2" tmp
   tmp=$(mktemp)
@@ -149,8 +177,19 @@ update_rollback() { # branch head message
 # update_to_tag TAG [yes|no]: install release TAG keeping the installation mode (published images or
 # a build on this server), the configuration and all data volumes. A backup is taken first.
 update_to_tag() {
-  local tag="$1" backup="${2:-yes}" prev_head prev_branch img rimg
+  local tag="$1" backup="${2:-yes}" mode="${3:-keep}" prev_head prev_branch img rimg owner="" remote
   valid_tag "$tag" || die "invalid version: $tag (expected e.g. v1.2.0)"
+  if [[ "$mode" == prebuilt ]]; then
+    remote=$(git remote get-url origin)
+    case "$remote" in
+      https://github.com/*) owner=${remote#https://github.com/} ;;
+      git@github.com:*) owner=${remote#git@github.com:} ;;
+      *) die "--prebuilt requires a GitHub origin (https://github.com/OWNER/REPO)" ;;
+    esac
+    owner=${owner%%/*}
+    [[ "$owner" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]*$ ]] || die "invalid GitHub owner"
+    owner=$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')
+  fi
   update_progress fetching 5
   echo "==> Fetching $tag from $(git remote get-url origin)"
   git fetch --depth 1 -q origin "refs/tags/$tag" || die "release $tag was not found"
@@ -164,6 +203,10 @@ update_to_tag() {
   chmod +x scripts/*.sh
   write_caddyfile
   set_env INTRABIN_VERSION "$tag"
+  if [[ "$mode" == prebuilt ]]; then
+    set_env INTRABIN_IMAGE "ghcr.io/$owner/intrabin:$tag"
+    set_env INTRABIN_RUNNER_IMAGE "ghcr.io/$owner/intrabin-runner:$tag"
+  fi
   img=$(get_env INTRABIN_IMAGE)
   if [[ -n "$img" ]]; then
     set_env INTRABIN_IMAGE "${img%:*}:$tag"
@@ -392,9 +435,21 @@ cmd_restore() {
 }
 
 cmd_update() {
-  local branch before after
-  if [[ "${1:-}" == "--to" ]]; then
-    update_to_tag "${2:-}" "$([[ "${3:-}" == "--no-backup" ]] && echo no || echo yes)"
+  local branch before after tag="" backup=yes mode=keep
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --to) [[ $# -ge 2 ]] || die "--to requires a version"; tag="$2"; valid_tag "$tag" || die "invalid version: $tag"; shift 2 ;;
+      --prebuilt) mode=prebuilt; shift ;;
+      --no-backup) backup=no; shift ;;
+      *) die "unknown update option: $1" ;;
+    esac
+  done
+  [[ "$mode" != prebuilt || -n "$tag" ]] || die "--prebuilt requires --to vX.Y.Z"
+  mkdir -p "$INSTALL_DIR/run"
+  exec 9>"$INSTALL_DIR/run/.update.lock"
+  flock -n 9 || die "another update is already running"
+  if [[ -n "$tag" ]]; then
+    update_to_tag "$tag" "$backup" "$mode"
     write_agent_info
     return 0
   fi
@@ -409,7 +464,7 @@ cmd_update() {
   git fetch --depth 1 origin "$branch" -q
   after=$(git rev-parse --short FETCH_HEAD)
   if [[ "$before" == "$after" ]] && ! confirm "Already up to date ($before). Rebuild anyway" "n"; then return 0; fi
-  if [[ "${1:-}" != "--no-backup" ]] && running; then cmd_backup; fi
+  if [[ "$backup" == yes ]] && running; then cmd_backup; fi
   git checkout -q -f -B "$branch" FETCH_HEAD
   chmod +x scripts/*.sh
   set_env INTRABIN_VERSION "$after"
@@ -506,6 +561,7 @@ Usage: intrabin [command]
   restore [file]        restore a backup (takes a safety backup first)
   update [--no-backup]  update to the latest version (backs up first)
   update --to vX.Y.Z    install a published release (keeps data and configuration)
+    --prebuilt          switch to published GHCR images; no builds on this server
   info                  installation details
   uninstall             remove Intrabin
 EOF
@@ -580,7 +636,7 @@ case "${1:-}" in
   runner) cmd_runner "${2:-}" ;;
   backup) cmd_backup ;;
   restore) cmd_restore "${2:-}" ;;
-  update) cmd_update "${2:-}" "${3:-}" "${4:-}" ;;
+  update) shift; cmd_update "$@" ;;
   apply-update) cmd_apply_update ;;
   agent-info) write_agent_info ;;
   info) cmd_info ;;

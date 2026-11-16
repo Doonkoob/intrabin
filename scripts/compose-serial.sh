@@ -15,9 +15,9 @@ compose_serial_images() { # build|pull; enabled services come from Compose (incl
     if [[ "$mode" == "build" ]]; then
       dc build "$service" || return
       # Image-only services (e.g. Caddy) must be fetched before up --pull never.
-      dc pull --ignore-buildable "$service" || return
+      dc pull --ignore-buildable --policy missing "$service" || return
     else
-      dc pull "$service" || return
+      dc pull --policy missing "$service" || compose_release_fallback "$service" || return
     fi
     done=$((done + 1))
     compose_serial_progress "$mode" "$service" "$done" "$total" || return
@@ -43,3 +43,4 @@ compose_serial_up() {
 
 # Installations without a web update in progress only need the terminal messages.
 compose_serial_progress() { :; }
+compose_release_fallback() { return 1; }

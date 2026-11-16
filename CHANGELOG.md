@@ -3,6 +3,12 @@
 Intrabin uses semantic release versions (`vMAJOR.MINOR.PATCH`). Each release has a matching
 `VERSION` file, Git tag, container image tag and release note in `docs/releases/`.
 
+## v0.2.4 — 2026-11-17
+
+Recover older updaters, switch source installations to prebuilt images, and download images
+from public release assets when GHCR is unavailable. Reuse cached proxy images and serialize
+manual updates with the web agent. See [release notes](docs/releases/v0.2.4.md).
+
 ## v0.2.3 — 2026-11-17
 
 Lightweight 3D login motion, smooth theme switching, clearer field labels, and concise English

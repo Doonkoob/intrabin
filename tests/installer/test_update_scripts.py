@@ -91,6 +91,7 @@ finally:
         self.assertFalse(any(c[0] == 'build' for c in calls))
         self.assertEqual([c[-1] for c in calls if c[0] == 'pull'], ['intrabin', 'runner', 'caddy'])
         self.assertEqual([c[0] for c in calls], ['pull'] * 3 + ['up'] * 3)
+        self.assertTrue(all('--policy' in c and c[c.index('--policy') + 1] == 'missing' for c in calls if c[0] == 'pull'))
 
     def test_failed_build_stops_before_other_images_or_restarts(self):
         result, calls, status = self.run_update(fail='build runner')
@@ -106,6 +107,141 @@ finally:
         result, calls, _ = self.run_update(services='intrabin')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(all(c[-1] == 'intrabin' for c in calls))
+
+
+class ReleaseModeTest(unittest.TestCase):
+    def run_release(self, fail=False):
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp)
+            envfile = task / '.env'
+            original = 'INTRABIN_VERSION=v0.1.0\nINTRABIN_IMAGE=\n'
+            envfile.write_text(original)
+            cli = (ROOT / 'scripts/intrabin-cli.sh').read_text()
+            names = ['get_env', 'set_env', 'valid_tag', 'update_rollback', 'update_to_tag']
+            definitions = []
+            for name in names:
+                match = re.search(r'^' + name + r'\(\) \{.*?^\}', cli, re.M | re.S)
+                if name in ('get_env', 'valid_tag'):
+                    match = re.search(r'^' + name + r'\(\) \{[^\n]*', cli, re.M)
+                self.assertIsNotNone(match, name)
+                definitions.append(match.group())
+            script = '\n'.join(['set -euo pipefail', *definitions, r'''
+ENV_FILE="$TASK_DIR/.env"
+cd "$TASK_DIR"
+mkdir scripts
+printf '#!/bin/bash\n' > scripts/stub.sh
+die() { echo "$*" >&2; exit 1; }
+warn() { :; }; ok() { :; }; update_progress() { :; }; write_caddyfile() { :; }
+running() { return 0; }
+cmd_backup() { cp "$ENV_FILE" backup.env; }
+git() {
+  case "$1 $2" in
+    'remote get-url') echo https://github.com/Doonkoob/intrabin ;;
+    'rev-parse HEAD') echo oldcommit ;;
+    'rev-parse --abbrev-ref') echo main ;;
+  esac
+}
+compose_serial_images() {
+  echo "$1" >> operations
+  cp "$ENV_FILE" prepared.env
+  [[ "$FAIL_PULL" != yes ]]
+}
+compose_serial_up() { echo restart >> operations; }
+wait_healthy() { echo "$1" >> operations; }
+update_to_tag v0.2.4 yes prebuilt
+'''])
+            result = subprocess.run(['bash', '-c', script], env=dict(os.environ, TASK_DIR=tmp, FAIL_PULL='yes' if fail else 'no'), text=True, capture_output=True)
+            return result, envfile.read_text(), (task / 'prepared.env').read_text(), (task / 'backup.env').read_text(), (task / 'operations').read_text(), original
+
+    def test_prebuilt_switch_backs_up_and_pulls_both_release_images(self):
+        result, current, prepared, backup, operations, original = self.run_release()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(backup, original)
+        self.assertIn('INTRABIN_IMAGE=ghcr.io/doonkoob/intrabin:v0.2.4', current)
+        self.assertIn('INTRABIN_RUNNER_IMAGE=ghcr.io/doonkoob/intrabin-runner:v0.2.4', prepared)
+        self.assertEqual(operations.splitlines(), ['pull', 'restart', 'v0.2.4'])
+
+    def test_failed_pull_restores_source_settings_without_restart(self):
+        result, current, prepared, backup, operations, original = self.run_release(fail=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(current, original)
+        self.assertEqual(backup, original)
+        self.assertEqual(operations.splitlines(), ['pull'])
+
+
+class ArchiveFallbackTest(unittest.TestCase):
+    def test_public_release_archive_is_loaded_and_verified(self):
+        cli = (ROOT / 'scripts/intrabin-cli.sh').read_text()
+        function = re.search(r'^compose_release_fallback\(\) \{.*?^\}', cli, re.M | re.S).group()
+        with tempfile.TemporaryDirectory() as tmp:
+            script = '\n'.join(['set -euo pipefail', function, r'''
+get_env() {
+  case "$1" in
+    INTRABIN_IMAGE) echo ghcr.io/doonkoob/intrabin:v0.2.4 ;;
+    INTRABIN_VERSION) echo v0.2.4 ;;
+  esac
+}
+valid_tag() { return 0; }
+git() { echo https://github.com/Doonkoob/intrabin; }
+docker() {
+  echo "$*" >> "$TASK_DIR/calls"
+  case "$1 $2" in
+    'info --format') echo aarch64 ;;
+    'image load') cat > "$TASK_DIR/loaded" ;;
+  esac
+}
+curl() {
+  echo "$*" >> "$TASK_DIR/calls"
+  while [[ "$1" != -o ]]; do shift; done
+  printf 'saved-image' | gzip > "$2"
+}
+compose_release_fallback intrabin
+if compose_release_fallback caddy; then exit 99; fi
+'''])
+            result = subprocess.run(['bash', '-c', script], env=dict(os.environ, TASK_DIR=tmp), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((Path(tmp) / 'loaded').read_text(), 'saved-image')
+            calls = (Path(tmp) / 'calls').read_text()
+            self.assertIn('https://github.com/Doonkoob/intrabin/releases/download/v0.2.4/intrabin-linux-arm64.tar.gz', calls)
+            self.assertIn('image inspect ghcr.io/doonkoob/intrabin:v0.2.4', calls)
+
+    def test_bootstrap_runs_tagged_updater_without_checking_out_installation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp)
+            install = task / 'install'; install.mkdir()
+            (install / '.env').write_text('old-settings')
+            (install / 'compose.yaml').write_text('services: {}')
+            fake_git = task / 'git'
+            fake_git.write_text(r'''#!/usr/bin/env bash
+set -eu
+[[ "$1" == -C ]]; shift 2
+case "$1" in
+  rev-parse) echo tagged-commit ;;
+  fetch) : ;;
+  show)
+    case "$2" in
+      tagged-commit:scripts/intrabin-cli.sh)
+        cat <<'SCRIPT'
+set -eu
+source "$(dirname "${BASH_SOURCE[0]}")/compose-serial.sh"
+[[ "$(cat "$INTRABIN_DIR/.env")" == old-settings ]]
+[[ "$*" == 'update --to v0.2.4 --prebuilt' ]]
+echo tagged-updater > "$INTRABIN_DIR/result"
+SCRIPT
+        ;;
+      tagged-commit:scripts/compose-serial.sh) echo ': # matching tagged helper' ;;
+      *) exit 2 ;;
+    esac ;;
+  *) exit 3 ;;
+esac
+''')
+            fake_git.chmod(0o755)
+            # Root is required only by the entrypoint; run the same body without that guard.
+            bootstrap = (ROOT / 'scripts/update.sh').read_text().replace('[[ $EUID -eq 0 ]] || die "run as root"', ':')
+            result = subprocess.run(['bash', '-c', bootstrap, 'update.sh', 'v0.2.4', str(install)], env=dict(os.environ, PATH=tmp + os.pathsep + os.environ['PATH']), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((install / 'result').read_text().strip(), 'tagged-updater')
+            self.assertEqual((install / '.env').read_text(), 'old-settings')
 
 
 if __name__ == '__main__':
