@@ -316,7 +316,7 @@ function DRForm({ initial, monitors, providers, onSaved, onCancel, title }: { in
             <Field label={t('wf.dns.recordName')} htmlFor="dr-rec" error={f['config.record_name']}><Input id="dr-rec" dir="ltr" placeholder="app.example.com" value={c.record_name} onChange={(e) => upd({ record_name: e.target.value })} /></Field>
             <Field label={t('dr.primaryValue')} htmlFor="dr-pv" error={f['config.primary_value']}><Input id="dr-pv" dir="ltr" value={c.primary_value} onChange={(e) => upd({ primary_value: e.target.value })} /></Field>
             <Field label={t('dr.secondaryValue')} htmlFor="dr-sv" error={f['config.secondary_value']}><Input id="dr-sv" dir="ltr" value={c.secondary_value} onChange={(e) => upd({ secondary_value: e.target.value })} /></Field>
-            <Field label="TTL" htmlFor="dr-ttl" help={t('dr.ttlHelp')}><Input id="dr-ttl" type="number" min={1} value={c.ttl} onChange={(e) => upd({ ttl: Number(e.target.value) })} /></Field>
+            <Field label={t('dns.ttlLabel')} htmlFor="dr-ttl" help={t('dr.ttlHelp')}><Input id="dr-ttl" type="number" min={1} value={c.ttl} onChange={(e) => upd({ ttl: Number(e.target.value) })} /></Field>
             {prov?.type === 'cloudflare' && <div className="flex items-end pb-2"><Checkbox label={t('dns.proxied')} checked={c.proxied} onChange={(v) => upd({ proxied: v })} /></div>}
           </div>
           {(c.pre_steps.length > 0 || c.post_steps.length > 0) && <p className="mt-3 text-xs text-muted">{t('dr.extraStepsKept', { pre: c.pre_steps.length, post: c.post_steps.length })}</p>}

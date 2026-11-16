@@ -4,14 +4,17 @@ import { ApiError, get, post } from '../api'
 import { usePrefs, useSession } from '../app'
 import { Button, ErrorBanner, Field, Input, Select, Textarea } from '../components/ui'
 import { Logo, PrefControls } from '../components/Layout'
+import { LoginMark } from '../components/LoginMark'
 
-function Shell({ title, brand = 'Intrabin', children }: { title: string; brand?: string; children: React.ReactNode }) {
+function Shell({ title, brand = 'Intrabin', animated = false, children }: { title: string; brand?: string; animated?: boolean; children: React.ReactNode }) {
   return (
     <div className="auth-shell flex min-h-screen flex-col">
       <div className="flex justify-end p-5"><PrefControls /></div>
       <div className="flex flex-1 items-center justify-center px-5 pb-16">
         <div className="w-full max-w-md">
-          <div className="mb-8 flex items-center justify-center gap-3"><Logo /><span className="text-xl font-semibold">{brand}</span></div>
+          <div className={`mb-7 flex items-center justify-center ${animated ? 'flex-col gap-1' : 'gap-3'}`}>
+            {animated ? <LoginMark /> : <Logo />}<span className="text-xl font-semibold">{brand}</span>
+          </div>
           <div className="ui-card rounded-2xl border border-line bg-surface p-6 sm:p-9">
             <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
             <div className="mt-7">{children}</div>
@@ -46,7 +49,7 @@ export function LoginPage({ instanceName }: { instanceName: string }) {
     }
   }
   return (
-    <Shell title={t('login.title')} brand={instanceName || 'Intrabin'}>
+    <Shell title={t('login.title')} brand={instanceName || 'Intrabin'} animated>
       <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
         {error && <ErrorBanner error={error} />}
         <Field label={t('login.username')} htmlFor="username">

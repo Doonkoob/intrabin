@@ -43,8 +43,8 @@ export function PrefControls({ compact = false }: { compact?: boolean }) {
       </button>
       <button type="button" onClick={() => setTheme(nextTheme[theme])} data-testid="theme-toggle" data-theme-value={theme}
         className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm text-muted hover:bg-surface-2 hover:text-fg"
-        aria-label={`${t('theme.label')}: ${t(`theme.${theme}` as Key)}`} title={`${t('theme.label')}: ${t(`theme.${theme}` as Key)}`}>
-        {icon}{!compact && <span className="hidden sm:inline">{t(`theme.${theme}` as Key)}</span>}
+        aria-label={`${t('theme.label')}: ${t(`theme.${theme}` as Key)}. ${t('theme.switchTo', { theme: t(`theme.${nextTheme[theme]}` as Key) })}`} title={t('theme.switchTo', { theme: t(`theme.${nextTheme[theme]}` as Key) })}>
+        <span key={theme} className="theme-icon" aria-hidden>{icon}</span>{!compact && <span className="hidden sm:inline">{t(`theme.${theme}` as Key)}</span>}
       </button>
     </div>
   )

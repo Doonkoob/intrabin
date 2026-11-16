@@ -123,3 +123,32 @@ html[lang="fa"] .sidebar-group { letter-spacing: 0; font-size: 11px; }
 .sidebar-account { background: #192f3e; border: 1px solid #2a4150; }
 .auth-shell { background: radial-gradient(ellipse at 20% 20%, var(--accent-soft), transparent 60%), var(--bg); }
 dialog::backdrop { backdrop-filter: blur(4px); background: rgb(9 22 35 / .55); }
+
+/* Small, decorative 3D mark. Only transforms animate; it settles after 1.6s. */
+.login-mark { width: 112px; height: 112px; display: grid; place-items: center; perspective: 500px; pointer-events: none; }
+.login-mark-scene { position: relative; width: 64px; height: 64px; transform-style: preserve-3d; transform: rotateX(52deg) rotateZ(-35deg); animation: login-mark-enter 1600ms cubic-bezier(.2,.7,.2,1) both; }
+.login-mark-plate { position: absolute; inset: 0; border-radius: 15px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); background: var(--surface); box-shadow: -3px 4px 0 var(--border), -7px 10px 18px rgb(10 40 45 / .09); }
+.login-mark-base { transform: translateZ(-20px); background: var(--surface-2); }
+.login-mark-middle { transform: translateZ(0); background: var(--accent-soft); }
+.login-mark-top { transform: translateZ(22px); display: grid; place-items: center; color: var(--accent-fg); background: var(--accent); border-color: var(--accent); box-shadow: -3px 4px 0 color-mix(in srgb, var(--accent) 70%, #112532); }
+.login-mark-top svg { width: 32px; height: 32px; transform: rotateZ(35deg); }
+.login-mark-plate i { position: absolute; bottom: 7px; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
+.login-mark-plate i:nth-child(1) { left: 10px; }
+.login-mark-plate i:nth-child(2) { left: 19px; opacity: .65; }
+.login-mark-plate i:nth-child(3) { left: 28px; opacity: .35; }
+@keyframes login-mark-enter {
+  from { transform: translateY(12px) rotateX(65deg) rotateZ(-65deg) scale(.88); }
+  65% { transform: translateY(-3px) rotateX(49deg) rotateZ(-32deg) scale(1); }
+  to { transform: rotateX(52deg) rotateZ(-35deg); }
+}
+.theme-icon { display: inline-flex; animation: theme-icon-enter 240ms ease-out; }
+@keyframes theme-icon-enter { from { opacity: .3; transform: rotate(-35deg) scale(.7); } to { opacity: 1; transform: rotate(0) scale(1); } }
+.theme-transitioning,
+.theme-transitioning :where(.ui-card, .ui-input, button, header, aside, dialog, .bg-surface, .bg-surface-2, .bg-bg, .bg-accent, .bg-accent-soft, .text-muted, .login-mark-plate) {
+  transition: background-color 240ms ease, color 240ms ease, border-color 240ms ease;
+}
+@media (max-height: 720px) { .login-mark { width: 80px; height: 80px; } .login-mark-scene { width: 52px; height: 52px; } }
+@media (prefers-reduced-motion: reduce) {
+  .login-mark-scene, .theme-icon { animation: none; }
+  .theme-transitioning, .theme-transitioning * { transition: none !important; }
+}

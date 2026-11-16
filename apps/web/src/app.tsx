@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { get, setCsrf, setUnauthorizedHandler } from './api'
 import { translate, locale, type Key, type Lang } from './i18n'
 import type { Me } from './types'
@@ -36,6 +36,24 @@ function store(k: string, v: string) {
 export function PrefsProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => readStored('intrabin.lang', ['en', 'fa'] as const, navigator.language?.startsWith('fa') ? 'fa' : 'en'))
   const [theme, setThemeState] = useState<Theme>(() => readStored('intrabin.theme', ['light', 'dark', 'system'] as const, 'system'))
+  const themeTimer = useRef<number | undefined>(undefined)
+  const changeTheme = useCallback((next: Theme) => {
+    window.clearTimeout(themeTimer.current)
+    const root = document.documentElement
+    // Animate only an explicit choice, never the initial render or OS theme changes.
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches && !document.hidden) {
+      root.classList.add('theme-transitioning')
+      themeTimer.current = window.setTimeout(() => root.classList.remove('theme-transitioning'), 300)
+    } else {
+      root.classList.remove('theme-transitioning')
+    }
+    store('intrabin.theme', next)
+    setThemeState(next)
+  }, [])
+  useEffect(() => () => {
+    window.clearTimeout(themeTimer.current)
+    document.documentElement.classList.remove('theme-transitioning')
+  }, [])
 
   useEffect(() => {
     document.documentElement.lang = lang
@@ -58,10 +76,10 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
     lang,
     setLang: (l) => { store('intrabin.lang', l); setLangState(l) },
     theme,
-    setTheme: (t) => { store('intrabin.theme', t); setThemeState(t) },
+    setTheme: changeTheme,
     t: (k, vars) => translate(lang, k, vars),
     loc: locale(lang),
-  }), [lang, theme])
+  }), [lang, theme, changeTheme])
   return <PrefsCtx.Provider value={value}>{children}</PrefsCtx.Provider>
 }
 

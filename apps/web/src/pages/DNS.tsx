@@ -306,7 +306,7 @@ function ChangeDialog({ provider, zone, record, del: isDelete, onClose, onDone }
                 {rec.type === 'TXT' ? <Textarea id="rec-content" dir="ltr" rows={2} value={rec.content} onChange={(e) => upd({ content: e.target.value })} />
                   : <Input id="rec-content" dir="ltr" value={rec.content} onChange={(e) => upd({ content: e.target.value })} />}
               </Field>
-              <Field label="TTL" htmlFor="rec-ttl" help={t('dns.ttlHelp')}>
+              <Field label={t('dns.ttlLabel')} htmlFor="rec-ttl" help={t('dns.ttlHelp')}>
                 <Input id="rec-ttl" type="number" min={1} value={rec.ttl} onChange={(e) => upd({ ttl: Number(e.target.value) })} />
               </Field>
               {(rec.type === 'A' || rec.type === 'AAAA' || rec.type === 'CNAME') && (

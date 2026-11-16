@@ -3,6 +3,11 @@
 Intrabin uses semantic release versions (`vMAJOR.MINOR.PATCH`). Each release has a matching
 `VERSION` file, Git tag, container image tag and release note in `docs/releases/`.
 
+## v0.2.3 — 2026-11-17
+
+Lightweight 3D login motion, smooth theme switching, clearer field labels, and concise English
+and Persian introductions. See [release notes](docs/releases/v0.2.3.md).
+
 ## v0.2.2 — 2026-11-17
 
 Simplified sign-in and setup screens, removed promotional text and redundant page introductions,

@@ -488,13 +488,13 @@ function WorkflowForm({ initial, monitors, dnsProviders, onSaved, onCancel, titl
                 </Select>
               </Field>
               {trigger.metric === 'status' ? (
-                <Field label={t('wf.cond.value')} htmlFor="wf-sv" error={f['trigger.status_value']}>
+                <Field label={t('wf.cond.targetStatus')} htmlFor="wf-sv" error={f['trigger.status_value']}>
                   <Select id="wf-sv" value={trigger.status_value ?? 'DOWN'} onChange={(e) => setTrigger({ ...trigger, status_value: e.target.value })}>
                     {['UP', 'DEGRADED', 'SUSPECTED_DOWN', 'DOWN', 'UNKNOWN', 'MAINTENANCE'].map((x) => <option key={x} value={x}>{t(`status.${x}` as Key)}</option>)}
                   </Select>
                 </Field>
               ) : (
-                <Field label={`${t('wf.cond.value')} (${t(`wf.cond.unit.${trigger.metric ?? 'latency_ms'}` as Key)})`} htmlFor="wf-thr" error={f['trigger.threshold']}>
+                <Field label={`${t('wf.cond.threshold')} (${t(`wf.cond.unit.${trigger.metric ?? 'latency_ms'}` as Key)})`} htmlFor="wf-thr" error={f['trigger.threshold']}>
                   <Input id="wf-thr" type="number" step="any" value={trigger.threshold ?? 0} onChange={(e) => setTrigger({ ...trigger, threshold: Number(e.target.value) })} />
                 </Field>
               )}
@@ -625,7 +625,7 @@ function WorkflowForm({ initial, monitors, dnsProviders, onSaved, onCancel, titl
                         <Field label={t('wf.dns.recordName')} htmlFor={`${sid}-rn`} error={k('record_name')}><Input id={`${sid}-rn`} dir="ltr" placeholder="app.example.com" value={s.record_name ?? ''} onChange={(e) => upd(i, { record_name: e.target.value })} /></Field>
                         {s.dns_action !== 'delete' && <>
                           <Field label={t('dns.content')} htmlFor={`${sid}-rc`} error={k('content')}><Input id={`${sid}-rc`} dir="ltr" placeholder="{{dr_ip}}" value={s.content ?? ''} onChange={(e) => upd(i, { content: e.target.value })} /></Field>
-                          <Field label="TTL" htmlFor={`${sid}-ttl`} error={k('ttl')}><Input id={`${sid}-ttl`} type="number" min={1} value={s.ttl ?? 60} onChange={(e) => upd(i, { ttl: Number(e.target.value) })} /></Field>
+                          <Field label={t('dns.ttlLabel')} htmlFor={`${sid}-ttl`} error={k('ttl')}><Input id={`${sid}-ttl`} type="number" min={1} value={s.ttl ?? 60} onChange={(e) => upd(i, { ttl: Number(e.target.value) })} /></Field>
                         </>}
                       </div>
                       {s.dns_action !== 'delete' && dnsProviders.find((p) => p.id === s.provider_id)?.type === 'cloudflare' && s.record_type !== 'TXT' && (
