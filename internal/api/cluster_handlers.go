@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/intrabin/intrabin/internal/cluster"
 	"github.com/intrabin/intrabin/internal/node"
 	"github.com/intrabin/intrabin/internal/security"
+	"github.com/intrabin/intrabin/internal/storage"
 )
 
 func (s *Server) readOnlyErr(r *http.Request) *APIError {
@@ -209,7 +211,11 @@ func (s *Server) memberAction(action string, f func(*cluster.Manager, *http.Requ
 		if !s.clusterOrErr(w, r) {
 			return
 		}
-		id := r.PathValue("id")
+		id, err := s.cluster.ResolveNodeID(r.Context(), r.PathValue("id"))
+		if err != nil {
+			s.writeErr(w, r, err)
+			return
+		}
 		p := principal(r)
 		if err := f(s.cluster, r, id); err != nil {
 			s.audit.Record(r.Context(), p.actor(), "cluster.node_"+action, "node", id, "failure", map[string]any{"error": err.Error()})
@@ -254,6 +260,28 @@ func (s *Server) handleMakeLeader(w http.ResponseWriter, r *http.Request) {
 
 type nodeAddressReq struct {
 	Address string `json:"address"`
+}
+
+func (s *Server) handleSetNodeName(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name *string `json:"name"`
+	}
+	if err := decode(r, &req); err != nil {
+		s.writeErr(w, r, err)
+		return
+	}
+	if req.Name == nil || !storage.ValidNodeName(strings.TrimSpace(*req.Name)) {
+		s.writeErr(w, r, errValidation(map[string]string{"name": "Use 1–63 letters, digits, dots, underscores or hyphens. Start and end with a letter or digit."}))
+		return
+	}
+	name := strings.TrimSpace(*req.Name)
+	s.memberAction("renamed", func(m *cluster.Manager, r *http.Request, id string) error {
+		err := m.SetName(r.Context(), id, name)
+		if errors.Is(err, storage.ErrConflict) {
+			return errValidation(map[string]string{"name": "This name is already used by another node."})
+		}
+		return err
+	})(w, r)
 }
 
 func (s *Server) handleSetNodeAddress(w http.ResponseWriter, r *http.Request) {

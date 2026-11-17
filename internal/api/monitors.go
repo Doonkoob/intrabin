@@ -266,6 +266,11 @@ func (s *Server) normalizeMonitor(ctx context.Context, in *monitorInput) map[str
 	nodes := []string{}
 	seenNode := map[string]bool{}
 	for _, id := range in.NodeIDs {
+		if !known[id] && s.cluster != nil && s.cluster.Enabled() {
+			if resolved, err := s.cluster.ResolveNodeID(ctx, id); err == nil {
+				id = resolved
+			}
+		}
 		if !known[id] {
 			f["node_ids"] = "Unknown monitoring node."
 		}
@@ -654,7 +659,16 @@ func (s *Server) handleMonitorResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	since := time.Now().Add(-parseRange(r.URL.Query().Get("range"), 24*time.Hour))
-	rs, err := s.store.ListResults(r.Context(), id, since, r.URL.Query().Get("node_id"), queryInt(r, "limit", 100))
+	nodeID := r.URL.Query().Get("node_id")
+	if _, err := uuid.Parse(nodeID); nodeID != "" && err != nil && s.cluster != nil && s.cluster.Enabled() {
+		resolved, err := s.cluster.ResolveNodeID(r.Context(), nodeID)
+		if err != nil {
+			s.writeErr(w, r, errValidation(map[string]string{"node_id": "Unknown monitoring node."}))
+			return
+		}
+		nodeID = resolved
+	}
+	rs, err := s.store.ListResults(r.Context(), id, since, nodeID, queryInt(r, "limit", 100))
 	if err != nil {
 		s.writeErr(w, r, err)
 		return
@@ -741,6 +755,7 @@ func (s *Server) handleMonitorStats(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) nodeNames() map[string]string {
 	out := map[string]string{s.node.Identity.ID: node.Label(s.node.Identity.ID, s.node.Identity.Name, s.cfg.PublicURL)}
+	names, _ := s.store.AllSettings(context.Background(), storage.NodeNameKeyPrefix)
 	if nodes, err := s.store.ListClusterNodes(context.Background()); err == nil {
 		for _, n := range nodes {
 			address := n.APIURL
@@ -748,6 +763,9 @@ func (s *Server) nodeNames() map[string]string {
 				address = n.ClusterAddr
 			}
 			out[n.ID] = node.Label(n.ID, n.Name, address)
+			if name := names[storage.NodeNameKeyPrefix+n.ID]; name != "" {
+				out[n.ID] = name
+			}
 		}
 	}
 	if s.cluster != nil && s.cluster.Enabled() {

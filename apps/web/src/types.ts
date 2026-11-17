@@ -18,6 +18,7 @@ export interface NodeInfo {
   node_id: string
   node_name: string
   node_label?: string
+  node_key?: string
   role: 'STANDALONE' | 'FOLLOWER' | 'LEADER' | 'NO_QUORUM'
   can_manage: boolean
   version: string
@@ -216,6 +217,8 @@ export interface ClusterMember {
   id: string
   name: string
   label?: string
+  custom_name?: string
+  node_key?: string
   address: string
   api_url: string
   location: string

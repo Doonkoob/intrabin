@@ -167,6 +167,7 @@ func (s *Server) Handler() http.Handler {
 		{"DELETE /api/v1/cluster/nodes/{id}", auth.PermClusterManage, true, s.handleRemoveNode},
 		{"POST /api/v1/cluster/nodes/{id}/make-leader", auth.PermClusterManage, true, s.handleMakeLeader},
 		{"PUT /api/v1/cluster/nodes/{id}/address", auth.PermClusterManage, true, s.handleSetNodeAddress},
+		{"PUT /api/v1/cluster/nodes/{id}/name", auth.PermClusterManage, true, s.handleSetNodeName},
 
 		{"GET /api/v1/overview", auth.PermView, true, s.handleOverview},
 		{"GET /api/v1/overview/node-latency", auth.PermView, true, s.handleNodeLatency},

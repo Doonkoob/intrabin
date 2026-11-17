@@ -5,11 +5,54 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/intrabin/intrabin/internal/model"
 )
+
+const NodeNameKeyPrefix = "cluster.node-name."
+
+var customNodeName = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$`)
+
+// Empty names reset the display to the node's address. Names are URL-safe public aliases.
+func ValidNodeName(name string) bool { return name == "" || customNodeName.MatchString(name) }
+
+// SetNodeName enforces uniqueness inside the replicated setting.set command. Checking in
+// the FSM transaction prevents concurrent rename requests from claiming the same alias.
+func (s *Store) SetNodeName(ctx context.Context, id, name string) error {
+	if !ValidNodeName(name) {
+		return ErrConflict
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM cluster_nodes WHERE id=?)`, id).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	if name != "" {
+		var duplicate bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM cluster_nodes n WHERE n.id<>? AND
+			(lower(n.id)=lower(?) OR EXISTS(SELECT 1 FROM settings s WHERE s.key=?||n.id AND lower(s.value)=lower(?))))`, id, name, NodeNameKeyPrefix, name).Scan(&duplicate); err != nil {
+			return err
+		}
+		if duplicate {
+			return ErrConflict
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES(?,?,?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`, NodeNameKeyPrefix+id, name, ms(Now(ctx))); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
 // Token errors.
 var (

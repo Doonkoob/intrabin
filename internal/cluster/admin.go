@@ -541,6 +541,21 @@ func (m *Manager) Remove(ctx context.Context, id string) error {
 	return m.opt.CP.DeleteClusterNode(ctx, id)
 }
 
+// SetName assigns a unique public alias without changing the node's persistent identity.
+func (m *Manager) SetName(ctx context.Context, id, name string) error {
+	if _, err := m.requireLeader(); err != nil {
+		return err
+	}
+	if _, ok := m.isMember(id); !ok {
+		return storage.ErrNotFound
+	}
+	if !storage.ValidNodeName(name) {
+		return fmt.Errorf("%w: use 1–63 letters, digits, dots, underscores or hyphens; start and end with a letter or digit", ErrBadRequest)
+	}
+	// Use an existing replicated operation so older members store aliases during rolling upgrades.
+	return m.opt.CP.SetSetting(ctx, storage.NodeNameKeyPrefix+id, name)
+}
+
 // SetAddress changes the cluster address of a member (this node included), for example to move
 // from the cluster port to the node's public https:// URL. The new address must reach that node
 // from the leader before the change is committed, so a typo cannot cut a member off.

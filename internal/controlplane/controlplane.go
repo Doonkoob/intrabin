@@ -246,6 +246,8 @@ func (x *Executor) Execute(ctx context.Context, cmd *Command) error {
 		if dec(&p) {
 			if storage.IsLocalSetting(p.Key) {
 				err = errors.New("local settings are not replicated")
+			} else if strings.HasPrefix(p.Key, storage.NodeNameKeyPrefix) {
+				err = st.SetNodeName(ctx, strings.TrimPrefix(p.Key, storage.NodeNameKeyPrefix), p.Value)
 			} else {
 				err = st.SetSetting(ctx, p.Key, p.Value)
 			}

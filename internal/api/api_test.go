@@ -551,3 +551,98 @@ func TestClusterJoinCredentialsAndOverview(t *testing.T) {
 	}
 	fresh.loadCSRF()
 }
+
+func TestClusterCustomNodeNames(t *testing.T) {
+	leader, worker := newEnv(t), newEnv(t)
+	owner, local := leader.owner(), worker.owner()
+	var body any
+	if code := owner.do("POST", "/api/v1/cluster/init", map[string]string{"advertise": leader.srv.URL}, &body); code != 200 {
+		t.Fatalf("init: %d %+v", code, body)
+	}
+	var token struct{ Token string }
+	owner.do("POST", "/api/v1/cluster/tokens", map[string]int{"ttl_minutes": 10}, &token)
+	if code := local.do("POST", "/api/v1/cluster/join", map[string]string{"token": token.Token, "advertise": worker.srv.URL, "data_action": "discard"}, &body); code != 200 {
+		t.Fatalf("join: %d %+v", code, body)
+	}
+	member := worker.client()
+	if code := member.do("POST", "/api/v1/auth/login", map[string]string{"username": "owner", "password": "owner-password-1"}, &body); code != 200 {
+		t.Fatalf("worker login: %d", code)
+	}
+	member.loadCSRF()
+	id := worker.node.Identity.ID
+	path := "/api/v1/cluster/nodes/" + id + "/name"
+	if code := owner.do("PUT", path, map[string]string{"name": "Tehran-01"}, &body); code != 200 {
+		t.Fatalf("rename: %d %+v", code, body)
+	}
+	var info struct {
+		Node struct {
+			ID    string `json:"node_id"`
+			Key   string `json:"node_key"`
+			Name  string `json:"node_name"`
+			Label string `json:"node_label"`
+		}
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		code := member.do("GET", "/api/v1/node", nil, &info)
+		if code == 200 && info.Node.Key == "Tehran-01" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("alias did not replicate: %d %+v", code, info)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if info.Node.ID != id || info.Node.Name != "Tehran-01" || info.Node.Label != "Tehran-01" {
+		t.Fatalf("alias changed internal identity: %+v", info)
+	}
+	if code := owner.do("PUT", "/api/v1/cluster/nodes/tehran-01/name", map[string]string{"name": "probe-01"}, &body); code != 200 {
+		t.Fatalf("alias route: %d %+v", code, body)
+	}
+	var validation struct {
+		Error struct{ Fields map[string]string }
+	}
+	if code := owner.do("PUT", "/api/v1/cluster/nodes/"+leader.node.Identity.ID+"/name", map[string]string{"name": "PROBE-01"}, &validation); code != 422 || validation.Error.Fields["name"] == "" {
+		t.Fatalf("duplicate alias: %d %+v", code, validation)
+	}
+	if code := owner.do("PUT", path, map[string]string{"name": leader.node.Identity.ID}, &body); code != 422 {
+		t.Fatalf("another node UUID accepted as alias: %d %+v", code, body)
+	}
+	if code := owner.do("PUT", path, map[string]string{"name": "bad/name"}, &body); code != 422 {
+		t.Fatalf("invalid alias: %d %+v", code, body)
+	}
+	if code := member.do("PUT", path, map[string]string{"name": "follower-edit"}, &body); code != 409 {
+		t.Fatalf("follower renamed node: %d %+v", code, body)
+	}
+	var created struct{ Monitor struct{ ID string } }
+	if code := owner.do("POST", "/api/v1/monitors", map[string]any{"name": "alias probe", "type": "http", "target": leader.srv.URL + "/api/v1/health", "interval_seconds": 30, "timeout_seconds": 2, "node_ids": []string{"PROBE-01"}}, &created); code != 201 {
+		t.Fatalf("alias selector: %d %+v", code, created)
+	}
+	monitor, err := leader.store.GetMonitor(context.Background(), created.Monitor.ID)
+	if err != nil || len(monitor.NodeSelector) != 1 || monitor.NodeSelector[0] != id {
+		t.Fatalf("selector must retain UUID: %+v %v", monitor, err)
+	}
+	if code := owner.do("GET", "/api/v1/monitors/"+created.Monitor.ID+"/results?node_id=probe-01", nil, &body); code != 200 {
+		t.Fatalf("result alias filter: %d %+v", code, body)
+	}
+	// Concurrent requests for the same alias must commit only one winner.
+	codes := make(chan int, 2)
+	for _, nodeID := range []string{id, leader.node.Identity.ID} {
+		go func(nodeID string) {
+			codes <- owner.do("PUT", "/api/v1/cluster/nodes/"+nodeID+"/name", map[string]string{"name": "shared-node"}, nil)
+		}(nodeID)
+	}
+	first, second := <-codes, <-codes
+	if !((first == 200 && second == 422) || (first == 422 && second == 200)) {
+		t.Fatalf("concurrent uniqueness: %d %d", first, second)
+	}
+	if code := owner.do("PUT", path, map[string]string{"name": ""}, &body); code != 200 {
+		t.Fatalf("reset name: %d %+v", code, body)
+	}
+	var status struct{ Cluster cluster.Status }
+	owner.do("GET", "/api/v1/cluster", nil, &status)
+	for _, m := range status.Cluster.Members {
+		if m.ID == id && (m.CustomName != "" || m.NodeKey != id) {
+			t.Fatalf("reset did not restore original key: %+v", m)
+		}
+	}
+}

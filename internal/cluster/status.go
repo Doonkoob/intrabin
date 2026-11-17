@@ -3,10 +3,12 @@ package cluster
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/raft"
 	"github.com/intrabin/intrabin/internal/node"
+	"github.com/intrabin/intrabin/internal/storage"
 )
 
 // MemberStatus describes one member as seen from this node.
@@ -14,6 +16,8 @@ type MemberStatus struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	Label        string `json:"label"`
+	CustomName   string `json:"custom_name"`
+	NodeKey      string `json:"node_key"`
 	Address      string `json:"address"`
 	APIURL       string `json:"api_url"`
 	Location     string `json:"location"`
@@ -58,11 +62,43 @@ type GateStatus struct {
 }
 
 func (m *Manager) LocalLabel() string {
+	if name := m.CustomName(context.Background(), m.opt.Node.Identity.ID); name != "" {
+		return name
+	}
 	address := m.opt.APIURL
 	if address == "" {
 		address = m.advertiseAddr()
 	}
 	return node.Label(m.opt.Node.Identity.ID, m.opt.Node.Identity.Name, address)
+}
+
+func (m *Manager) CustomName(ctx context.Context, id string) string {
+	name, _ := m.opt.Store.GetSetting(ctx, storage.NodeNameKeyPrefix+id)
+	return name
+}
+
+// ResolveNodeID accepts either a stable internal UUID or its cluster-wide custom alias.
+func (m *Manager) ResolveNodeID(ctx context.Context, ref string) (string, error) {
+	if !m.Enabled() {
+		return "", ErrNotClustered
+	}
+	servers := m.servers()
+	for _, server := range servers {
+		if string(server.ID) == ref {
+			return ref, nil
+		}
+	}
+	names, err := m.opt.Store.AllSettings(ctx, storage.NodeNameKeyPrefix)
+	if err != nil {
+		return "", err
+	}
+	for _, server := range servers {
+		id := string(server.ID)
+		if name := names[storage.NodeNameKeyPrefix+id]; name != "" && strings.EqualFold(name, ref) {
+			return id, nil
+		}
+	}
+	return "", storage.ErrNotFound
 }
 
 // Status returns the current cluster status.
@@ -101,6 +137,7 @@ func (m *Manager) Status(ctx context.Context) *Status {
 	st.Gate = &GateStatus{Open: ok, Voters: voters, Reachable: have, Required: need}
 
 	meta := map[string]MemberStatus{}
+	names, _ := m.opt.Store.AllSettings(ctx, storage.NodeNameKeyPrefix)
 	if nodes, err := m.opt.Store.ListClusterNodes(ctx); err == nil {
 		for _, n := range nodes {
 			meta[n.ID] = MemberStatus{Name: n.Name, APIURL: n.APIURL, Location: n.Location, Version: n.Version}
@@ -163,6 +200,10 @@ func (m *Manager) Status(ctx context.Context) *Status {
 			address = ms.Address
 		}
 		ms.Label = node.Label(id, ms.Name, address)
+		ms.NodeKey = id
+		if name := names[storage.NodeNameKeyPrefix+id]; name != "" {
+			ms.CustomName, ms.NodeKey, ms.Name, ms.Label = name, name, name, name
+		}
 		st.Members = append(st.Members, ms)
 	}
 	sort.Slice(st.Members, func(i, j int) bool { return st.Members[i].Label < st.Members[j].Label })

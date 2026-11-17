@@ -7,6 +7,15 @@ Nodes are identified by a persistent UUID, which survives updates. The panel dis
 URL or cluster address plus a short ID, so identical hostnames remain distinguishable. The member
 list reports each node's running version from live heartbeats.
 
+On the leader, open **Cluster / Nodes → Rename node** to assign a custom name such as `tehran-01`.
+The name becomes the node's display label and public `node_key`. It must be unique in the cluster
+(case-insensitive), 1–63 letters/digits/dots/underscores/hyphens, and start and end with a letter or
+digit. Names replicate to all members and survive restarts. **Use address** resets a custom name.
+
+Node action URLs, monitor `node_ids` and result `node_id` filters accept the custom name. Changing
+it preserves the internal UUID, certificates, saved probe assignments, history and membership.
+The old UUID remains usable; a previous custom name stops resolving after it is renamed.
+
 After joining, sign in on any member with the leader's accounts. Joining replaces the selected
 local account data with replicated cluster accounts and waits until that state is available.
 Password changes are replicated across the cluster; follower sessions are confirmed locally

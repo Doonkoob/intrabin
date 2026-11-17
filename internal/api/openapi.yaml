@@ -8,6 +8,8 @@ info:
     session's CSRF token (from `GET /auth/me`) in the `X-CSRF-Token` header.
     All timestamps are RFC 3339 UTC. Errors use a uniform body:
     `{"error":{"code":"validation_failed","message":"...","fields":{"name":"..."}}}`.
+    Cluster node actions, monitor node_ids and result node_id filters accept custom node names
+    as well as UUIDs. UUIDs remain stable when names change; node_key is the public alias.
     Management endpoints return `409 node_read_only` on nodes that are not the active controller.
   license: { name: Apache-2.0 }
 servers:
@@ -380,6 +382,24 @@ paths:
   /cluster/nodes/{id}/demote: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], post: { summary: Demote a voter to non-voter, responses: { '200': { description: OK } } } }
   /cluster/nodes/{id}: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], delete: { summary: Remove a member (never automatic), responses: { '200': { description: OK } } } }
   /cluster/nodes/{id}/make-leader: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], post: { summary: "Hand leadership to this member (a non-voter is promoted first). Body: { demote_self: bool } also turns the current leader into a non-voter afterwards.", responses: { '200': { description: OK }, '400': { description: Not reachable, still catching up, or already the leader } } } }
+  /cluster/nodes/{id}/name:
+    parameters:
+      - { name: id, in: path, required: true, description: Node UUID or custom name, schema: { type: string } }
+    put:
+      summary: Set or reset a cluster-wide unique node name on the leader
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 63, description: "Letters, digits, dots, underscores and hyphens; start and end with a letter or digit. Empty resets to the address label." }
+      responses:
+        '200': { description: Updated cluster status; node_key and label use the custom name }
+        '422': { description: Invalid name or already used by another member (case-insensitive) }
+        '409': { description: This node is not the active leader }
   /cluster/nodes/{id}/address: { parameters: [{ name: id, in: path, required: true, schema: { type: string } }], put: { summary: "Change a member's cluster address. Body: { address } — the node's public http(s) URL (cluster traffic through the web port) or host:port of its cluster port. The leader verifies that the address reaches that node first.", responses: { '200': { description: OK }, '400': { description: Invalid or unreachable address } } } }
   /system/update: { get: { summary: "Update state of this node (settings.manage): installed and latest release, stable release history, availability, host agent, last update status and replicated cluster rollout progress", responses: { '200': { description: OK } } } }
   /system/update/check: { post: { summary: Check GitHub for a newer release now, responses: { '200': { description: OK } } } }

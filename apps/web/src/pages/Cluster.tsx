@@ -13,7 +13,7 @@ function NodeCard({ node }: { node: NodeInfo }) {
   return (
     <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
       <dt className="text-muted">{t('cluster.nodeName')}</dt><dd className="break-all font-medium">{node.node_label || node.node_name}</dd>
-      <dt className="text-muted">{t('cluster.nodeId')}</dt><dd className="break-all font-mono text-xs"><span className="ltr inline-block">{node.node_id}</span></dd>
+      <dt className="text-muted">{t('cluster.nodeId')}</dt><dd className="break-all font-mono text-xs" title={node.node_id}><span className="ltr inline-block">{node.node_key || node.node_id}</span></dd>
       <dt className="text-muted">{t('cluster.role')}</dt><dd><RoleBadge role={node.role} /></dd>
       <dt className="text-muted">{t('cluster.version')}</dt><dd><span className="ltr inline-block">{node.version} ({node.commit.slice(0, 7)})</span></dd>
       <dt className="text-muted">{t('cluster.uptime')}</dt><dd>{fmtDuration(loc, node.uptime_seconds ?? 0)}</dd>
@@ -134,6 +134,38 @@ function AddressDialog({ m, onClose, onDone }: { m: ClusterMember | null; onClos
   )
 }
 
+function NameDialog({ m, onClose, onDone }: { m: ClusterMember | null; onClose: () => void; onDone: () => void }) {
+  const { t } = usePrefs()
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [fieldError, setFieldError] = useState<string | undefined>()
+  useEffect(() => { setName(m?.custom_name || ''); setError(null); setFieldError(undefined) }, [m])
+  const save = async (value: string) => {
+    if (!m) return
+    setBusy(true); setError(null); setFieldError(undefined)
+    try {
+      await put(`/cluster/nodes/${m.id}/name`, { name: value.trim() })
+      onDone()
+    } catch (e) {
+      const err = e as ApiError
+      if (err.fields.name) setFieldError(err.fields.name)
+      else setError(err.message)
+    } finally { setBusy(false) }
+  }
+  return (
+    <Dialog open={!!m} onClose={onClose} title={t('cluster.rename')}
+      footer={<>{m?.custom_name && <Button disabled={busy} onClick={() => void save('')}>{t('cluster.resetName')}</Button>}<Button disabled={busy} onClick={onClose}>{t('common.cancel')}</Button><Button variant="primary" form="node-name-form" type="submit" loading={busy}>{t('common.save')}</Button></>}>
+      <form id="node-name-form" className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void save(name) }}>
+        {error && <ErrorBanner error={error} />}
+        <Field label={t('cluster.uniqueName')} htmlFor="node-name" help={t('cluster.uniqueNameHelp')} error={fieldError}>
+          <Input id="node-name" className="ltr font-mono" value={name} onChange={(e) => setName(e.target.value)} placeholder="tehran-01" maxLength={63} required disabled={busy} invalid={!!fieldError} autoComplete="off" />
+        </Field>
+      </form>
+    </Dialog>
+  )
+}
+
 /** Cluster summary + members (+ admin actions when `admin`). Used on leader and follower views. */
 function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; reload: () => void }) {
   const { t, loc } = usePrefs()
@@ -141,6 +173,7 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
   const [pending, setPending] = useState<{ m: ClusterMember; action: 'promote' | 'demote' | 'remove' } | null>(null)
   const [leaderFor, setLeaderFor] = useState<ClusterMember | 'select' | null>(null)
   const [addrFor, setAddrFor] = useState<ClusterMember | null>(null)
+  const [nameFor, setNameFor] = useState<ClusterMember | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const leader = c.members.find((m) => m.leader)
@@ -217,10 +250,11 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
                 <td className={`${td} tabular`}>{fmtNumber(loc, m.applied_index)}</td>
                 <td className={`${td} tabular`}>{fmtNumber(loc, m.outbox)}</td>
                 <td className={`${td} ltr text-start font-mono text-xs`} data-testid={`version-${m.id}`}>{m.version || '—'}</td>
-                <td className={`${td} ltr text-start font-mono text-xs`}>{m.address}<div className="mt-1 text-muted">{m.id}</div></td>
+                <td className={`${td} ltr text-start font-mono text-xs`}>{m.address}<div className="mt-1 text-muted" title={m.id}>{m.node_key || m.id}</div></td>
                 {admin && (
                   <td className={`${td} text-end`}>
                     <div className="flex flex-wrap justify-end gap-1">
+                      <Button size="sm" variant="ghost" onClick={() => setNameFor(m)} data-testid={`rename-${m.id}`}>{t('cluster.rename')}</Button>
                       {m.self && m.leader && c.members.length > 1 && (
                         <Button size="sm" onClick={() => setLeaderFor('select')} data-testid="step-down"><Crown className="size-3.5" />{t('cluster.stepDown')}</Button>
                       )}
@@ -275,6 +309,7 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
       {admin && <>
         <LeaderDialog c={c} target={leaderFor} onClose={() => setLeaderFor(null)} onDone={() => { setLeaderFor(null); reload(); void refresh() }} />
         <AddressDialog m={addrFor} onClose={() => setAddrFor(null)} onDone={() => { setAddrFor(null); reload() }} />
+        <NameDialog m={nameFor} onClose={() => setNameFor(null)} onDone={() => { setNameFor(null); reload(); void refresh() }} />
       </>}
     </>
   )
@@ -477,7 +512,7 @@ export function ClusterPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader title={t('cluster.title')} />
-      {c.enabled ? <ClusterView c={c} admin={admin} reload={cluster.reload} /> : admin ? <StandaloneActions c={c} reload={cluster.reload} /> : null}
+      {c.enabled ? <ClusterView c={c} admin={admin} reload={() => { cluster.reload(); node.reload() }} /> : admin ? <StandaloneActions c={c} reload={() => { cluster.reload(); node.reload() }} /> : null}
       {c.enabled && admin && <TokensCard />}
       <Card title={<span className="inline-flex items-center gap-2"><Server className="size-4" />{t('overview.node')}</span>}><NodeCard node={node.data!.node} /></Card>
     </div>

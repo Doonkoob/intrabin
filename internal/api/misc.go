@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	_ "embed"
 	"net/http"
 	"slices"
@@ -24,12 +25,17 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) nodeInfo() map[string]any {
 	label := node.Label(s.node.Identity.ID, s.node.Identity.Name, s.cfg.PublicURL)
+	name, key := s.node.Identity.Name, s.node.Identity.ID
 	if s.cluster != nil && s.cluster.Enabled() {
 		label = s.cluster.LocalLabel()
+		if custom := s.cluster.CustomName(context.Background(), key); custom != "" {
+			name, key = custom, custom
+		}
 	}
 	return map[string]any{
 		"node_id":    s.node.Identity.ID,
-		"node_name":  s.node.Identity.Name,
+		"node_name":  name,
+		"node_key":   key,
 		"node_label": label,
 		"role":       s.node.Role(),
 		"can_manage": s.node.CanManage(),
