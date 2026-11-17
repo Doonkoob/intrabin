@@ -3,6 +3,11 @@
 Intrabin uses semantic release versions (`vMAJOR.MINOR.PATCH`). Each release has a matching
 `VERSION` file, Git tag, container image tag and release note in `docs/releases/`.
 
+## v0.2.7 — 2026-11-17
+
+Tagged GitHub updates automatically use prebuilt release images for existing source installs.
+Explicit `--build` remains available. See [release notes](docs/releases/v0.2.7.md).
+
 ## v0.2.6 — 2026-11-17
 
 Live cluster state in Overview, unambiguous node addresses and versions, and join/login readiness

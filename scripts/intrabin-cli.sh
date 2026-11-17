@@ -174,11 +174,20 @@ update_rollback() { # branch head message
   die "$3. Nothing was changed: the previous version keeps running."
 }
 
-# update_to_tag TAG [yes|no]: install release TAG keeping the installation mode (published images or
-# a build on this server), the configuration and all data volumes. A backup is taken first.
+# Tagged GitHub releases use published images by default, including existing source installs.
+# Explicit --build keeps local source builds available. Configuration and data volumes survive.
 update_to_tag() {
-  local tag="$1" backup="${2:-yes}" mode="${3:-keep}" prev_head prev_branch img rimg owner="" remote
+  local tag="$1" backup="${2:-yes}" mode="${3:-auto}" prev_head prev_branch img rimg owner="" remote
   valid_tag "$tag" || die "invalid version: $tag (expected e.g. v1.2.0)"
+  if [[ "$mode" == auto ]]; then
+    mode=keep
+    if [[ -z "$(get_env INTRABIN_IMAGE)" ]]; then
+      remote=$(git remote get-url origin)
+      case "$remote" in
+        https://github.com/*|git@github.com:*) mode=prebuilt ;;
+      esac
+    fi
+  fi
   if [[ "$mode" == prebuilt ]]; then
     remote=$(git remote get-url origin)
     case "$remote" in
@@ -205,7 +214,13 @@ update_to_tag() {
   set_env INTRABIN_VERSION "$tag"
   if [[ "$mode" == prebuilt ]]; then
     set_env INTRABIN_IMAGE "ghcr.io/$owner/intrabin:$tag"
-    set_env INTRABIN_RUNNER_IMAGE "ghcr.io/$owner/intrabin-runner:$tag"
+    # An automatic switch must preserve an explicitly configured custom runner registry.
+    if [[ "${3:-auto}" == prebuilt || -z "$(get_env INTRABIN_RUNNER_IMAGE)" ]]; then
+      set_env INTRABIN_RUNNER_IMAGE "ghcr.io/$owner/intrabin-runner:$tag"
+    fi
+  elif [[ "$mode" == build ]]; then
+    set_env INTRABIN_IMAGE ""
+    set_env INTRABIN_RUNNER_IMAGE ""
   fi
   img=$(get_env INTRABIN_IMAGE)
   if [[ -n "$img" ]]; then
@@ -435,16 +450,18 @@ cmd_restore() {
 }
 
 cmd_update() {
-  local branch before after tag="" backup=yes mode=keep
+  local branch before after tag="" backup=yes mode=auto
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --to) [[ $# -ge 2 ]] || die "--to requires a version"; tag="$2"; valid_tag "$tag" || die "invalid version: $tag"; shift 2 ;;
       --prebuilt) mode=prebuilt; shift ;;
+      --build) mode=build; shift ;;
       --no-backup) backup=no; shift ;;
       *) die "unknown update option: $1" ;;
     esac
   done
   [[ "$mode" != prebuilt || -n "$tag" ]] || die "--prebuilt requires --to vX.Y.Z"
+  [[ "$mode" != build || -n "$tag" ]] || die "--build requires --to vX.Y.Z"
   mkdir -p "$INSTALL_DIR/run"
   exec 9>"$INSTALL_DIR/run/.update.lock"
   flock -n 9 || die "another update is already running"
@@ -562,6 +579,7 @@ Usage: intrabin [command]
   update [--no-backup]  update to the latest version (backs up first)
   update --to vX.Y.Z    install a published release (keeps data and configuration)
     --prebuilt          switch to published GHCR images; no builds on this server
+    --build             explicitly build this release on the server instead
   info                  installation details
   uninstall             remove Intrabin
 EOF

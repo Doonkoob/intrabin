@@ -110,11 +110,11 @@ finally:
 
 
 class ReleaseModeTest(unittest.TestCase):
-    def run_release(self, fail=False):
+    def run_release(self, fail=False, mode="prebuilt", image="", runner="", remote="https://github.com/Doonkoob/intrabin"):
         with tempfile.TemporaryDirectory() as tmp:
             task = Path(tmp)
             envfile = task / '.env'
-            original = 'INTRABIN_VERSION=v0.1.0\nINTRABIN_IMAGE=\n'
+            original = f'INTRABIN_VERSION=v0.1.0\nINTRABIN_IMAGE={image}\nINTRABIN_RUNNER_IMAGE={runner}\n'
             envfile.write_text(original)
             cli = (ROOT / 'scripts/intrabin-cli.sh').read_text()
             names = ['get_env', 'set_env', 'valid_tag', 'update_rollback', 'update_to_tag']
@@ -136,7 +136,7 @@ running() { return 0; }
 cmd_backup() { cp "$ENV_FILE" backup.env; }
 git() {
   case "$1 $2" in
-    'remote get-url') echo https://github.com/Doonkoob/intrabin ;;
+    'remote get-url') echo "$FAKE_REMOTE" ;;
     'rev-parse HEAD') echo oldcommit ;;
     'rev-parse --abbrev-ref') echo main ;;
   esac
@@ -148,9 +148,9 @@ compose_serial_images() {
 }
 compose_serial_up() { echo restart >> operations; }
 wait_healthy() { echo "$1" >> operations; }
-update_to_tag v0.2.4 yes prebuilt
+if [[ -n "$UPDATE_MODE" ]]; then update_to_tag v0.2.4 yes "$UPDATE_MODE"; else update_to_tag v0.2.4; fi
 '''])
-            result = subprocess.run(['bash', '-c', script], env=dict(os.environ, TASK_DIR=tmp, FAIL_PULL='yes' if fail else 'no'), text=True, capture_output=True)
+            result = subprocess.run(['bash', '-c', script], env=dict(os.environ, TASK_DIR=tmp, FAIL_PULL='yes' if fail else 'no', UPDATE_MODE=mode, FAKE_REMOTE=remote), text=True, capture_output=True)
             return result, envfile.read_text(), (task / 'prepared.env').read_text(), (task / 'backup.env').read_text(), (task / 'operations').read_text(), original
 
     def test_prebuilt_switch_backs_up_and_pulls_both_release_images(self):
@@ -167,6 +167,55 @@ update_to_tag v0.2.4 yes prebuilt
         self.assertEqual(current, original)
         self.assertEqual(backup, original)
         self.assertEqual(operations.splitlines(), ['pull'])
+
+    def test_existing_source_install_defaults_to_prebuilt_without_extra_flags(self):
+        result, current, _, backup, operations, original = self.run_release(mode='')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(backup, original)
+        self.assertIn('INTRABIN_IMAGE=ghcr.io/doonkoob/intrabin:v0.2.4', current)
+        self.assertEqual(operations.splitlines(), ['pull', 'restart', 'v0.2.4'])
+
+    def test_default_pull_failure_keeps_old_source_install_running(self):
+        result, current, _, backup, operations, original = self.run_release(mode='', fail=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(current, original)
+        self.assertEqual(backup, original)
+        self.assertEqual(operations.splitlines(), ['pull'])
+
+    def test_explicit_build_switches_back_from_published_images(self):
+        result, current, _, backup, operations, original = self.run_release(mode='build', image='ghcr.io/doonkoob/intrabin:v0.1.0', runner='ghcr.io/doonkoob/intrabin-runner:v0.1.0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(backup, original)
+        self.assertIn('INTRABIN_IMAGE=\n', current)
+        self.assertIn('INTRABIN_RUNNER_IMAGE=\n', current)
+        self.assertEqual(operations.splitlines(), ['build', 'restart', 'v0.2.4'])
+
+    def test_custom_registry_is_preserved(self):
+        result, current, _, _, operations, _ = self.run_release(mode='', image='registry.example:5000/custom/app:v0.1.0', runner='registry.example:5000/custom/runner:v0.1.0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('INTRABIN_IMAGE=registry.example:5000/custom/app:v0.2.4', current)
+        self.assertIn('INTRABIN_RUNNER_IMAGE=registry.example:5000/custom/runner:v0.2.4', current)
+        self.assertEqual(operations.splitlines(), ['pull', 'restart', 'v0.2.4'])
+
+    def test_automatic_source_switch_preserves_custom_runner_registry(self):
+        result, current, _, _, operations, _ = self.run_release(mode='', runner='registry.example/custom/runner:v0.1.0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('INTRABIN_IMAGE=ghcr.io/doonkoob/intrabin:v0.2.4', current)
+        self.assertIn('INTRABIN_RUNNER_IMAGE=registry.example/custom/runner:v0.2.4', current)
+        self.assertEqual(operations.splitlines(), ['pull', 'restart', 'v0.2.4'])
+
+    def test_failed_explicit_build_restores_published_image_settings(self):
+        result, current, _, backup, operations, original = self.run_release(mode='build', fail=True, image='ghcr.io/doonkoob/intrabin:v0.1.0', runner='ghcr.io/doonkoob/intrabin-runner:v0.1.0')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(current, original)
+        self.assertEqual(backup, original)
+        self.assertEqual(operations.splitlines(), ['build'])
+
+    def test_non_github_source_keeps_build_mode(self):
+        result, current, _, _, operations, _ = self.run_release(mode='', remote='https://git.example/team/intrabin')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('INTRABIN_IMAGE=\n', current)
+        self.assertEqual(operations.splitlines(), ['build', 'restart', 'v0.2.4'])
 
 
 class ArchiveFallbackTest(unittest.TestCase):

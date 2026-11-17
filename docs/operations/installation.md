@@ -104,16 +104,19 @@ credentials (monitor secrets, DNS tokens) cannot be decrypted.
 ## Upgrade
 ### Restricted registries or an outdated updater
 
+From v0.2.7, tagged GitHub updates default to release images even for existing source installs.
+Older host scripts need the one-time bootstrap below to adopt this behavior.
+
 A Docker Hub `403 Forbidden` while resolving Node, Go or Python prevents source builds. Existing
-installations can switch to prebuilt images with `intrabin update --to v0.2.4 --prebuilt`.
+installations can switch to prebuilt images with `intrabin update --to v0.2.7 --prebuilt`.
 The updater first tries GHCR, then the matching public GitHub release image archive. Images are
 prepared one service at a time; cached versioned images are reused.
 
 If the installed CLI predates this option (or still builds both services together), run once:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Doonkoob/intrabin/v0.2.4/scripts/update.sh -o /tmp/intrabin-update.sh &&
-sudo bash /tmp/intrabin-update.sh v0.2.4 /opt/intrabin
+curl -fsSL https://raw.githubusercontent.com/Doonkoob/intrabin/v0.2.7/scripts/update.sh -o /tmp/intrabin-update.sh &&
+sudo bash /tmp/intrabin-update.sh v0.2.7 /opt/intrabin
 ```
 
 This loads the tagged updater before changing installed files, takes the normal backup, and keeps
@@ -132,7 +135,7 @@ writes a request into `/opt/intrabin/run/update` (mounted as `INTRABIN_UPDATE_DI
 unit `intrabin-update.path` runs `intrabin apply-update` on the host, which
 
 1. backs up the database and configuration (`/opt/intrabin/backups`),
-2. checks out the release tag and pulls its images (release installs) or builds them (source installs),
+2. checks out the release tag and pulls its images (including previous GitHub source installs),
 3. recreates the containers and waits until the new version answers.
 
 Data volumes and `.env` are kept; schema migrations run when the new version starts. If the pull or
@@ -147,7 +150,8 @@ the leader also updates the other members sequentially; see the first-upgrade in
 
 ### From the command line
 ```bash
-intrabin update --to v1.2.0     # installer setups: backup, fetch, pull or build, restart
+intrabin update --to vX.Y.Z          # backup, fetch, download release images, restart
+intrabin update --to vX.Y.Z --build  # explicitly build this release on the server
 ```
 Manual Compose installs:
 ```bash
