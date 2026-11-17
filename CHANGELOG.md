@@ -3,6 +3,11 @@
 Intrabin uses semantic release versions (`vMAJOR.MINOR.PATCH`). Each release has a matching
 `VERSION` file, Git tag, container image tag and release note in `docs/releases/`.
 
+## v0.2.9 — 2026-11-17
+
+Resolve custom node names before interpreting result filters as UUIDs, including names made of
+32 hexadecimal characters. See [release notes](docs/releases/v0.2.9.md).
+
 ## v0.2.8 — 2026-11-17
 
 Assign unique custom node names from the leader. Names act as public identifiers throughout the

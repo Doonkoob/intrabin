@@ -660,13 +660,20 @@ func (s *Server) handleMonitorResults(w http.ResponseWriter, r *http.Request) {
 	}
 	since := time.Now().Add(-parseRange(r.URL.Query().Get("range"), 24*time.Hour))
 	nodeID := r.URL.Query().Get("node_id")
-	if _, err := uuid.Parse(nodeID); nodeID != "" && err != nil && s.cluster != nil && s.cluster.Enabled() {
+	if nodeID != "" && s.cluster != nil && s.cluster.Enabled() {
 		resolved, err := s.cluster.ResolveNodeID(r.Context(), nodeID)
-		if err != nil {
+		if err == nil {
+			nodeID = resolved
+		} else if !errors.Is(err, storage.ErrNotFound) {
+			s.writeErr(w, r, err)
+			return
+		} else if parsed, parseErr := uuid.Parse(nodeID); parseErr == nil {
+			// Keep historical UUID filters valid even after a node leaves the cluster.
+			nodeID = parsed.String()
+		} else {
 			s.writeErr(w, r, errValidation(map[string]string{"node_id": "Unknown monitoring node."}))
 			return
 		}
-		nodeID = resolved
 	}
 	rs, err := s.store.ListResults(r.Context(), id, since, nodeID, queryInt(r, "limit", 100))
 	if err != nil {

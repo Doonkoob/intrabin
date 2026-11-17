@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/intrabin/intrabin/internal/audit"
 	"github.com/intrabin/intrabin/internal/automation"
 	"github.com/intrabin/intrabin/internal/cluster"
@@ -623,6 +624,39 @@ func TestClusterCustomNodeNames(t *testing.T) {
 	}
 	if code := owner.do("GET", "/api/v1/monitors/"+created.Monitor.ID+"/results?node_id=probe-01", nil, &body); code != 200 {
 		t.Fatalf("result alias filter: %d %+v", code, body)
+	}
+	// A valid custom name may look like a compact UUID; it must still resolve to this node.
+	hexName := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if code := owner.do("PUT", path, map[string]string{"name": hexName}, &body); code != 200 {
+		t.Fatalf("hex alias: %d %+v", code, body)
+	}
+	now := time.Now().UTC()
+	resultID := uuid.NewString()
+	if _, err := leader.store.InsertResults(context.Background(), []*model.CheckResult{{ID: resultID, MonitorID: created.Monitor.ID, NodeID: id, ConfigVersion: 1, RoundStart: now, ProbeAt: now, ReceivedAt: now, Success: true, Attempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	var filtered struct{ Results []model.CheckResult }
+	if code := owner.do("GET", "/api/v1/monitors/"+created.Monitor.ID+"/results?node_id="+hexName, nil, &filtered); code != 200 {
+		t.Fatalf("UUID-like alias filter: %d %+v", code, filtered)
+	}
+	found := false
+	for _, result := range filtered.Results {
+		if result.ID == resultID {
+			found = true
+		}
+		if result.NodeID != id {
+			t.Fatalf("wrong node in alias filter: %+v", result)
+		}
+	}
+	if !found {
+		t.Fatal("UUID-like alias did not resolve to the stored node identity")
+	}
+	oldID, oldResultID := uuid.NewString(), uuid.NewString()
+	if _, err := leader.store.InsertResults(context.Background(), []*model.CheckResult{{ID: oldResultID, MonitorID: created.Monitor.ID, NodeID: oldID, ConfigVersion: 1, RoundStart: now, ProbeAt: now, ReceivedAt: now, Success: true, Attempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if code := owner.do("GET", "/api/v1/monitors/"+created.Monitor.ID+"/results?node_id="+strings.ToUpper(oldID), nil, &filtered); code != 200 || len(filtered.Results) != 1 || filtered.Results[0].ID != oldResultID {
+		t.Fatalf("historical UUID filter: %d %+v", code, filtered)
 	}
 	// Concurrent requests for the same alias must commit only one winner.
 	codes := make(chan int, 2)
