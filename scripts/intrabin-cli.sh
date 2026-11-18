@@ -27,6 +27,7 @@ die() { err "$*"; exit 1; }
 cd "$INSTALL_DIR"
 
 source "$(dirname "$SELF")/compose-serial.sh"
+source "$(dirname "$SELF")/update-agent.sh"
 get_env() { grep -E "^${1}=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true; }
 compose_release_fallback() {
   local service="$1" image package tag repo arch tmp
@@ -120,9 +121,21 @@ write_shared() {
 
 write_agent_info() {
   [[ -d "$UPDATE_DIR" && ! -L "$UPDATE_DIR" ]] || return 0
-  local mode=source
+  local mode=source ready=0
   [[ -n "$(get_env INTRABIN_IMAGE)" ]] && mode=release
-  printf '{"agent":1,"mode":"%s"}\n' "$mode" | write_shared agent.json
+  if update_agent_ready; then ready=1; fi
+  printf '{"agent":%s,"mode":"%s"}\n' "$ready" "$mode" | write_shared agent.json
+}
+
+cmd_repair_update_agent() {
+  if ! update_agent_systemd_available; then
+    warn "systemd is unavailable; use intrabin update from the terminal"
+    write_agent_info
+    return 1
+  fi
+  install_update_agent_units "$INSTALL_DIR" || { warn "could not enable the update agent; run: intrabin repair-update-agent"; write_agent_info; return 1; }
+  write_agent_info
+  ok "update watcher and recovery timer enabled"
 }
 
 update_status() { # state target from started_at message [finished_at progress stage service]
@@ -238,6 +251,7 @@ update_to_tag() {
   update_progress health 95
   wait_healthy "$tag" || die "Intrabin did not report version $tag within 3 minutes (see: intrabin logs)"
   rm -f "$ENV_FILE.pre-update"
+  cmd_repair_update_agent || warn "the release is installed, but the host update agent needs repair"
   ok "updated to $tag"
 }
 
@@ -488,6 +502,7 @@ cmd_update() {
   write_caddyfile
   compose_serial_images build
   compose_serial_up
+  cmd_repair_update_agent || warn "the release is installed, but the host update agent needs repair"
   ok "updated $before → $after"
 }
 
@@ -495,8 +510,11 @@ cmd_update() {
 cmd_apply_update() {
   local req="$UPDATE_DIR/request" tag from started rc=0 log="$INSTALL_DIR/run/update.log"
   [[ -d "$UPDATE_DIR" && ! -L "$UPDATE_DIR" ]] || die "$UPDATE_DIR is missing; re-run the installer"
+  [[ -e "$req" || -L "$req" ]] || { write_agent_info; return 0; }
   exec 9>"$INSTALL_DIR/run/.update.lock"
-  flock -n 9 || { echo "another update is already running"; return 0; }
+  # A quick successful exit leaves PathExists true and can exhaust systemd's start limit.
+  # Wait for the current deployment instead; never consume or replace its pending request.
+  flock -w 600 9 || die "another update is still running; the request remains queued"
   [[ -e "$req" || -L "$req" ]] || return 0
   if [[ -L "$req" || ! -f "$req" ]]; then rm -f "$req"; die "ignored an invalid update request"; fi
   tag=$(head -c 4096 "$req" | sed -n 's/^version=//p' | head -n1)
@@ -550,9 +568,9 @@ cmd_uninstall() {
   fi
   if [[ "$wipe" == "yes" ]]; then dc --profile proxy --profile automation down -v --remove-orphans
   else dc --profile proxy --profile automation down --remove-orphans; fi
-  if [[ -f /etc/systemd/system/intrabin-update.path ]]; then
-    systemctl disable --now intrabin-update.path >/dev/null 2>&1 || true
-    rm -f /etc/systemd/system/intrabin-update.path /etc/systemd/system/intrabin-update.service
+  if [[ -f /etc/systemd/system/intrabin-update.path || -f /etc/systemd/system/intrabin-update.timer ]]; then
+    systemctl disable --now intrabin-update.path intrabin-update.timer >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/intrabin-update.path /etc/systemd/system/intrabin-update.timer /etc/systemd/system/intrabin-update.service
     systemctl daemon-reload >/dev/null 2>&1 || true
   fi
   rm -f /usr/local/bin/intrabin
@@ -576,6 +594,7 @@ Usage: intrabin [command]
   runner [on|off]       enable or disable the Action Runner
   backup                back up the database and configuration
   restore [file]        restore a backup (takes a safety backup first)
+  repair-update-agent   enable the host watcher and recovery timer without rebuilding
   update [--no-backup]  update to the latest version (backs up first)
   update --to vX.Y.Z    install a published release (keeps data and configuration)
     --prebuilt          switch to published GHCR images; no builds on this server
@@ -656,6 +675,7 @@ case "${1:-}" in
   restore) cmd_restore "${2:-}" ;;
   update) shift; cmd_update "$@" ;;
   apply-update) cmd_apply_update ;;
+  repair-update-agent) cmd_repair_update_agent ;;
   agent-info) write_agent_info ;;
   info) cmd_info ;;
   uninstall) cmd_uninstall ;;

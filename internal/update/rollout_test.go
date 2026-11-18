@@ -230,3 +230,54 @@ func TestExistingRolloutLabelsRefreshByID(t *testing.T) {
 		t.Fatalf("legacy plan labels/progress: %+v", got)
 	}
 }
+
+func TestQueuedAgentTimeoutStopsRolloutUntilRepair(t *testing.T) {
+	ctx := context.Background()
+	s := newSvc(t, "", "v1.3.0", t.TempDir())
+	cluster := &fakeCluster{self: "leader", active: true, peers: []UpdatePeer{{ID: "leader", Name: "leader", Reachable: true}, {ID: "worker", Name: "worker", Reachable: true}, {ID: "next", Name: "next", Reachable: true}}, states: map[string]*State{
+		"worker": {Current: "v1.2.0", Agent: Agent{Available: true}, Pending: true, PendingVersion: "v1.3.0"},
+		"next":   {Current: "v1.2.0", Agent: Agent{Available: true}},
+	}}
+	c := &Rollout{Service: s, Cluster: cluster, Store: s.Store, Write: s.Store.SetSetting}
+	plan := &RolloutPlan{Version: "v1.3.0", State: "running", Nodes: []RolloutNode{{ID: "leader", State: "succeeded", Version: "v1.3.0"}, {ID: "worker", State: "updating", StartedAt: time.Now().Add(-agentPickupTimeout - time.Second), Stage: "queued"}, {ID: "next", State: "queued"}}}
+	if err := c.save(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	c.Step(ctx)
+	got := c.State(ctx)
+	if got.State != "failed" || got.Nodes[1].State != "failed" || got.Nodes[2].State != "queued" || len(cluster.calls) != 0 {
+		t.Fatalf("unclaimed request must pause the rollout: %+v calls=%v", got, cluster.calls)
+	}
+	if got.Nodes[1].Error == "" {
+		t.Fatal("missing actionable pickup error")
+	}
+	// A late-starting agent can finish its queued request. Retry observes the actual version
+	// and advances only then; it never starts another member while the first is still queued.
+	cluster.states["worker"] = &State{Current: "v1.3.0", Agent: Agent{Available: true}}
+	if err := c.Retry(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c.Step(ctx)
+	if got := c.State(ctx); got.Nodes[1].State != "succeeded" {
+		t.Fatalf("repaired worker not recognized: %+v", got)
+	}
+	c.Step(ctx)
+	if len(cluster.calls) != 1 || cluster.calls[0] != "next" {
+		t.Fatalf("next member should start after repaired worker: %v", cluster.calls)
+	}
+}
+
+func TestRunningAgentIsNotTreatedAsUnclaimedRequest(t *testing.T) {
+	ctx := context.Background()
+	s := newSvc(t, "", "v1.3.0", t.TempDir())
+	cluster := &fakeCluster{self: "leader", active: true, peers: []UpdatePeer{{ID: "leader", Reachable: true}, {ID: "worker", Reachable: true}}, states: map[string]*State{"worker": {Current: "v1.2.0", Agent: Agent{Available: true}, Status: &Status{Target: "v1.3.0", State: "running", StartedAt: time.Now().Add(-6 * time.Minute).UTC().Format(time.RFC3339), Stage: "pulling"}}}}
+	c := &Rollout{Service: s, Cluster: cluster, Store: s.Store, Write: s.Store.SetSetting}
+	plan := &RolloutPlan{Version: "v1.3.0", State: "running", Nodes: []RolloutNode{{ID: "leader", State: "succeeded"}, {ID: "worker", State: "updating", StartedAt: time.Now().Add(-6 * time.Minute)}}}
+	if err := c.save(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	c.Step(ctx)
+	if got := c.State(ctx); got.State != "running" || got.Nodes[1].State != "updating" {
+		t.Fatalf("active agent must keep working: %+v", got)
+	}
+}

@@ -3,6 +3,12 @@
 Intrabin uses semantic release versions (`vMAJOR.MINOR.PATCH`). Each release has a matching
 `VERSION` file, Git tag, container image tag and release note in `docs/releases/`.
 
+## v0.2.10 — 2026-11-18
+
+Repair and install the host update watcher with a recovery timer, report agent availability
+accurately, and surface unclaimed cluster requests. Rename is now beside each node's name.
+See [release notes](docs/releases/v0.2.10.md).
+
 ## v0.2.9 — 2026-11-17
 
 Resolve custom node names before interpreting result filters as UUIDs, including names made of

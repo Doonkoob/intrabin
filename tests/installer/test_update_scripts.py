@@ -148,6 +148,7 @@ compose_serial_images() {
 }
 compose_serial_up() { echo restart >> operations; }
 wait_healthy() { echo "$1" >> operations; }
+cmd_repair_update_agent() { :; }
 if [[ -n "$UPDATE_MODE" ]]; then update_to_tag v0.2.4 yes "$UPDATE_MODE"; else update_to_tag v0.2.4; fi
 '''])
             result = subprocess.run(['bash', '-c', script], env=dict(os.environ, TASK_DIR=tmp, FAIL_PULL='yes' if fail else 'no', UPDATE_MODE=mode, FAKE_REMOTE=remote), text=True, capture_output=True)
@@ -278,7 +279,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/compose-serial.sh"
 echo tagged-updater > "$INTRABIN_DIR/result"
 SCRIPT
         ;;
-      tagged-commit:scripts/compose-serial.sh) echo ': # matching tagged helper' ;;
+      tagged-commit:scripts/compose-serial.sh|tagged-commit:scripts/update-agent.sh) echo ': # matching tagged helper' ;;
       *) exit 2 ;;
     esac ;;
   *) exit 3 ;;

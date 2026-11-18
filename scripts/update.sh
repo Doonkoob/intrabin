@@ -13,7 +13,7 @@ git -C "$install_dir" fetch --depth 1 origin "refs/tags/$tag:refs/tags/$tag"
 commit=$(git -C "$install_dir" rev-parse "refs/tags/$tag^{commit}")
 task_dir=$(mktemp -d)
 trap 'rm -rf "$task_dir"' EXIT
-for script in intrabin-cli.sh compose-serial.sh; do
+for script in intrabin-cli.sh compose-serial.sh update-agent.sh; do
   git -C "$install_dir" show "$commit:scripts/$script" >"$task_dir/$script"
 done
 INTRABIN_DIR="$install_dir" bash "$task_dir/intrabin-cli.sh" update --to "$tag" --prebuilt

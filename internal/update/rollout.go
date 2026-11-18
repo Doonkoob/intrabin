@@ -13,6 +13,8 @@ import (
 // RolloutKey is replicated before any server is restarted. A new leader resumes the same plan.
 const RolloutKey = "cluster.update.rollout"
 
+const agentPickupTimeout = 5 * time.Minute
+
 var ErrClusterInactive = errors.New("start cluster updates on the leader with an open quorum gate")
 
 // UpdatePeer is a live member, not cached enrollment metadata.
@@ -263,6 +265,11 @@ func (c *Rollout) Step(ctx context.Context) {
 			complete := 100
 			n.Progress, n.Stage, n.Service = &complete, "complete", ""
 			_ = c.save(ctx, p)
+			return
+		}
+		agentStarted := st.Status != nil && st.Status.Target == p.Version && st.Status.StartedAt != n.PreviousStartedAt
+		if n.State == "updating" && !agentStarted && time.Since(n.StartedAt) > agentPickupTimeout {
+			fail(n, errors.New("the host update agent has not picked up this request; enable or repair the update agent on this node, then retry the cluster update"))
 			return
 		}
 		if v, ok := parseSemver(st.Current); ok && v.pre == "" && compareSemver(st.Current, p.Version) > 0 {

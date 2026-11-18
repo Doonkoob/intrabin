@@ -243,6 +243,7 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
                 <td className={td}>
                   <div className="font-medium">{m.label || m.name}{m.self && <span className="ms-2 text-xs text-muted">({t('cluster.thisNodeShort')})</span>}</div>
                   <div className="text-xs text-muted">{m.leader ? t('roleName.LEADER') : m.raft_state ? t(`raft.${m.raft_state}` as Key) : '—'}{m.location && ` · ${m.location}`}</div>
+                  {admin && <Button size="sm" variant="ghost" className="mt-1" onClick={() => setNameFor(m)} data-testid={`rename-${m.id}`}>{t('cluster.rename')}</Button>}
                 </td>
                 <td className={td}>{m.suffrage === 'voter' ? t('cluster.voter') : t('cluster.nonvoter')}</td>
                 <td className={td}><Reach ok={m.reachable} /></td>
@@ -254,7 +255,6 @@ function ClusterView({ c, admin, reload }: { c: ClusterStatus; admin: boolean; r
                 {admin && (
                   <td className={`${td} text-end`}>
                     <div className="flex flex-wrap justify-end gap-1">
-                      <Button size="sm" variant="ghost" onClick={() => setNameFor(m)} data-testid={`rename-${m.id}`}>{t('cluster.rename')}</Button>
                       {m.self && m.leader && c.members.length > 1 && (
                         <Button size="sm" onClick={() => setLeaderFor('select')} data-testid="step-down"><Crown className="size-3.5" />{t('cluster.stepDown')}</Button>
                       )}

@@ -395,31 +395,9 @@ install_update_agent() {
     warn "systemd is not available: updates from the web UI are disabled (use: intrabin update)"
     return 0
   fi
-  cat >/etc/systemd/system/intrabin-update.service <<EOF
-[Unit]
-Description=Install an Intrabin update requested from the web UI
-After=docker.service
-Requires=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/intrabin apply-update
-TimeoutStartSec=3600
-EOF
-  cat >/etc/systemd/system/intrabin-update.path <<EOF
-[Unit]
-Description=Watch for Intrabin update requests from the web UI
-
-[Path]
-PathExists=$INSTALL_DIR/run/update/request
-Unit=intrabin-update.service
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  systemctl daemon-reload
-  if ! systemctl enable --now intrabin-update.path >/dev/null 2>&1; then
-    warn "could not enable intrabin-update.path; updates from the web UI are disabled"
+  source "$INSTALL_DIR/scripts/update-agent.sh"
+  if ! install_update_agent_units "$INSTALL_DIR"; then
+    warn "could not enable the update agent; run: intrabin repair-update-agent"
     return 0
   fi
   /usr/local/bin/intrabin agent-info || true

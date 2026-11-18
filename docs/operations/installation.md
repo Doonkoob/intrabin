@@ -124,6 +124,26 @@ prebuilt mode for subsequent panel updates. Run it on each outdated cluster host
 proxy image still needs its configured registry; set `CADDY_IMAGE` to an accessible equivalent
 when necessary. Other installation settings and named data volumes are preserved.
 
+### An update stays at “Waiting for the update agent”
+
+Run on the affected host (identify it by its address or node ID, not its hostname):
+
+```bash
+sudo systemctl status intrabin-update.path intrabin-update.service --no-pager -l
+```
+
+If the units are missing or failed, repair them without rebuilding or changing the current release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Doonkoob/intrabin/v0.2.10/scripts/update-agent.sh -o /tmp/intrabin-update-agent.sh &&
+sudo bash /tmp/intrabin-update-agent.sh /opt/intrabin
+```
+
+The watcher and 30-second recovery timer use the same service, so they do not run parallel
+updates. An existing pending request is preserved and handled by the repaired agent. If the
+cluster rollout has already failed, use its **Retry** button after the host agent is repaired.
+From v0.2.10, `intrabin repair-update-agent` performs the same repair.
+
 ### From the web UI (installer setups)
 Every node checks GitHub once a day for a newer release (`INTRABIN_UPDATE_REPO`, default
 `Doonkoob/intrabin`; turn it off with `INTRABIN_UPDATE_CHECK=false`). Owners and admins then see a
